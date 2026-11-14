@@ -7,5 +7,5 @@ subprocess.run([sys.executable,'-m','PyInstaller','--noconfirm','--clean','--one
 import shutil
 out=ROOT/'build/backend'
 if out.exists():shutil.rmtree(out)
-shutil.copytree(ROOT/'build/pyinstaller/qqmanager-server',out)
+shutil.copytree(ROOT/'build/pyinstaller/qqmanager-server',out,symlinks=True)
 print(out)
