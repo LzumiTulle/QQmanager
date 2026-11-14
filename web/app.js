@@ -1,0 +1,244 @@
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const labels = {home:'信息概览',insights:'重要信息',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'关注与设置'};
+const descriptions = {home:'从热闹的群聊里，找到与你有关的信息。',insights:'每一条重点都有出处，每一次提醒都有依据。',files:'按文件名或正文关键词，找回散落在群里的资料。',tasks:'把需要做的事放在这里，让时间替你记住。',messages:'保留完整来源，随时回到消息本身。',connections:'只配置一次，让新的内容自动来到这里。',settings:'告诉我你关心什么，让重点更贴近你。'};
+let nativeState = null;
+let connectorState = null, connectorSignature = '';
+let csrf = '', state = null, view = 'home', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
+const modal = $('#modal');
+const fmt = value => value ? new Date(typeof value === 'number' ? value*1000 : value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}) : '时间未知';
+const bytes = n => n >= 1048576 ? (n/1048576).toFixed(1)+' MB' : n >= 1024 ? Math.round(n/1024)+' KB' : n+' B';
+const badge = kind => `<span class="badge ${['待办','变更'].includes(kind)?'amber':kind==='问答'?'blue':''}">${esc(kind)}</span>`;
+const textEmpty = (title, text, small=false) => `<div class="empty ${small?'small':''}"><div class="empty-icon">✧</div><h3>${esc(title)}</h3><p>${esc(text)}</p></div>`;
+
+async function api(path, body) {
+  const response = await fetch(path, {method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},...(body===undefined?{}:{body:JSON.stringify(body)})});
+  const data = await response.json();
+  if (response.status===403 && body!==undefined && data.error==='会话已失效，请刷新页面') {
+    csrf=(await (await fetch('/api/session')).json()).csrf;
+    const retry=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)});
+    const result=await retry.json();if(!retry.ok)throw new Error(result.error||'请求失败');return result;
+  }
+  if (!response.ok) throw new Error(data.error || '请求失败');
+  return data;
+}
+function toast(message) {$('#toast').textContent=message;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),5000);}
+function notice(message='') {$('#notice').hidden=!message;$('#notice').textContent=message;}
+async function refresh(renderPage=true) {
+  const sequence=++loadSequence;
+  try {
+    const data=await api('/api/state?'+new URLSearchParams({q:$('#search').value,group:$('#group-filter').value}));
+    if(sequence!==loadSequence)return;
+    state=data;notice();
+    for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
+    $('#notification-count').textContent=state.notifications.length||'';
+    const selected=$('#group-filter').value;
+    $('#group-filter').innerHTML='<option value="">全部群聊</option>'+state.groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join('');
+    $('#group-filter').value=selected;
+    if(renderPage)render();
+    else if($('#model-status'))$('#model-status').innerHTML=modelStatus();
+    deliverBrowserNotifications();
+  } catch(error) {notice('无法连接本地服务：'+error.message+'。请确认启动窗口仍在运行。');}
+}
+function deliverBrowserNotifications(){
+  if(!('Notification' in window)||Notification.permission!=='granted'||localStorage.getItem('qqm-browser-notifications')!=='on')return;
+  for(const item of state.notifications){
+    const key='qqm-notified-'+item.id+'-'+item.created;
+    if(localStorage.getItem(key))continue;
+    try {new Notification('QQmanager · 待办提醒',{body:item.title,tag:key});localStorage.setItem(key,'1');} catch(_) {/* In-page reminder stays available. */}
+  }
+}
+function setView(next){view=labels[next]?next:'home';location.hash=view;category='全部';render();}
+function render(){
+  if(!state)return;
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
+  $('#crumb').textContent=labels[view];$('#page-title').textContent=view==='home'?'把重要的事留下。':labels[view];
+  $('#page-description').textContent=descriptions[view];
+  $('#searchbar').hidden=['connections','settings'].includes(view);
+  $('#eyebrow').textContent=({home:'YOUR INFORMATION, IN FOCUS',insights:'LESS NOISE. MORE CLARITY.',files:'A HOME FOR YOUR RESOURCES',tasks:'MAKE ROOM FOR WHAT MATTERS',messages:'EVERY INSIGHT HAS A SOURCE',connections:'CONNECTED, WITHOUT THE CLUTTER',settings:'BUILT AROUND YOUR INTERESTS'})[view];
+  $('#content').innerHTML=({home:homeView,insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
+}
+function insightCard(i){
+  const hasTask=state.tasks.some(t=>t.insight_id===i.id);
+  return `<article class="card"><div class="insight-top">${badge(i.kind)}<span>${i.status==='saved'?'已收藏':i.status==='read'?'已读':(i.engine==='llm'?'AI 提取':'规则识别')}</span><span class="group">${esc(i.group_name)}</span></div><h3>${esc(i.title)}</h3><div class="reason">✧ ${esc(i.reason)}</div>${i.date_note?`<p class="help">${esc(i.date_note)}</p>`:''}<div class="card-bottom"><small>${esc(i.sender)} · ${fmt(i.sent_at)}</small><div class="card-actions"><button data-action="source" data-id="${i.id}">原文</button><button data-action="task-from" data-id="${i.id}" ${hasTask?'disabled':''}>${hasTask?'已设待办':'＋ 待办'}</button><button data-action="save" data-id="${i.id}" aria-label="${i.status==='saved'?'取消收藏':'收藏'}">${i.status==='saved'?'★':'☆'}</button></div></div></article>`;
+}
+function taskRow(t, compact=false){
+  const overdue=t.remind_at&&t.remind_at*1000<Date.now()&&t.status==='open';
+  return `<div class="task-row ${t.status==='done'?'done':''}"><button class="task-check" data-action="task-toggle" data-id="${t.id}" aria-label="${t.status==='done'?'重新打开':'完成待办'}">${t.status==='done'?'✓':''}</button><div class="task-body"><h3>${esc(t.title)}</h3><p class="${overdue?'overdue':''}">${t.due?fmt(t.due):'未设置提醒时间'}${overdue?' · 已到提醒时间':''}${t.group_name?' · '+esc(t.group_name):''}${t.remind_at&&t.due&&Math.abs(t.remind_at*1000-new Date(t.due).getTime())>1000?' · 下次提醒 '+fmt(t.remind_at):''}</p>${!compact?`<div class="task-actions"><button data-action="task-edit" data-id="${t.id}">编辑时间</button>${t.status==='open'?`<button data-action="snooze" data-id="${t.id}">30 分钟后提醒</button>`:''}${t.insight_id?`<button data-action="task-source" data-id="${t.id}">原文依据</button>`:''}</div>`:''}</div></div>`;
+}
+function miniFile(f){const ext=f.name.split('.').pop().toLowerCase();return `<div class="mini-file"><span class="file-icon ${esc(ext)}">${esc(ext.toUpperCase().slice(0,4))}</span><div><strong>${esc(f.name)}</strong><small>${esc(f.group_name)} · ${bytes(f.size)}</small></div><button class="link-button" data-action="file-detail" data-id="${f.id}">↗</button></div>`;}
+function homeView(){
+  const important=state.insights.filter(i=>i.status!=='dismissed');
+  const tasks=state.tasks.filter(t=>t.status==='open').slice(0,4);
+  return `<div id="model-status" class="panel model-status">${modelStatus()}</div><div class="stats">${[['已收纳消息',state.counts.messages,'保留每一条原始记录','☷'],['发现重要信息',state.counts.insights,'原文可追溯','✧'],['文件资料',state.counts.files,'集中整理，随时查找','▤'],['待处理事项',state.counts.tasks,'让重要的事不再错过','◷']].map(([l,n,s,i])=>`<div class="stat"><div class="stat-top">${l}<span class="stat-icon">${i}</span></div><strong>${n.toLocaleString()}</strong><p>${s}</p></div>`).join('')}</div><div class="home-grid"><section><div class="section-title"><h2>值得你关注 <small>按重要程度排序</small></h2><button data-view="insights">查看全部 ↗</button></div>${important.length?important.slice(0,5).map(insightCard).join(''):`<div class="empty"><div class="empty-icon">✳</div><h3>${state.counts.messages?'还没有匹配的重要信息':'给热闹的群聊，留一个安静的入口'}</h3><p>${state.counts.messages?'可以添加个人关注词，或在原始记录中查看已导入的内容。':'导入聊天记录和资料，或连接自动接入。我们帮你把通知、任务、活动和资源整理在一起。'}</p><div class="empty-actions"><button class="primary" data-action="import">导入第一份内容</button><button data-action="demo">用示例体验</button></div></div>`}<div class="quiet-note"><span class="note-decoration">⌁</span><h3>消息太多，不知道从哪开始？</h3><p>选择一个资料文件夹，或接入新的群消息。让内容自动归集。</p><a href="#connections" data-view="connections">了解自动接入 →</a></div></section><aside><div class="panel"><div class="section-title"><h2>待办日程 <small>${state.counts.tasks} 项待处理</small></h2><button data-action="new-task">＋ 新建</button></div>${tasks.length?tasks.map(t=>taskRow(t,true)).join(''):textEmpty('暂时没有待办','从重要信息中添加，或新建自己的提醒。',true)}</div><div class="panel"><div class="section-title"><h2>最近收纳</h2><button data-view="files">文件资料 ↗</button></div>${state.files.length?state.files.slice(0,4).map(miniFile).join(''):textEmpty('给资料一个固定的位置','支持文本、PDF、Word 等文件。',true)}</div></aside></div>`;
+}
+function insightsView(){const items=state.insights.filter(i=>category==='已忽略'?i.status==='dismissed':i.status!=='dismissed'&&(category==='全部'||category==='已收藏'&&i.status==='saved'||i.kind===category));return `<div class="toolbar">${['全部','待办','变更','通知','资料','活动','问答','关注','已收藏','已忽略'].map(c=>`<button class="chip ${category===c?'active':''}" data-category="${c}">${c}</button>`).join('')}<span class="result-count">${items.length} 条 · 最多显示 500 条</span></div>${items.length?'<div class="cards-grid">'+items.map(insightCard).join('')+'</div>':textEmpty('这里暂时没有信息','试试其他分类或搜索词，也可以导入新的聊天记录。')}`;}
+function filesView(){return `<div class="section-title"><h2>我的资料 <small>${state.files.length} 个结果 · 最多 500 条</small></h2><button data-action="import-files">＋ 导入文件</button></div>${state.files.length?`<table class="file-table"><thead><tr><th>文件</th><th class="hide-mobile">来源</th><th>索引状态</th><th></th></tr></thead><tbody>${state.files.map(f=>{const ext=f.name.split('.').pop().toLowerCase();return `<tr><td><div class="file-name"><span class="file-icon ${esc(ext)}">${esc(ext.toUpperCase().slice(0,4))}</span><div><strong>${esc(f.name)}</strong><small>${bytes(f.size)} · ${fmt(f.created)}</small></div></div>${f.excerpt?`<p class="file-match">${esc(f.excerpt.slice(0,110))}…</p>`:''}</td><td class="hide-mobile">${esc(f.group_name)}</td><td><span class="badge ${f.parse_status.startsWith('已索引')?'':'amber'}">${esc(f.parse_status)}</span></td><td><button data-action="file-detail" data-id="${f.id}">查看</button></td></tr>`}).join('')}</tbody></table>`:textEmpty('还没找到这份资料','导入文件后，可同时搜索文件名和已提取的正文。多个关键词用空格分隔。')}`;}
+function tasksView(){let tasks=state.tasks.filter(t=>t.status===taskFilter);const q=$('#search').value.toLowerCase();const group=$('#group-filter').value;tasks=tasks.filter(t=>(!q||t.title.toLowerCase().includes(q))&&(!group||t.group_name===group));return `<div class="toolbar"><button class="chip ${taskFilter==='open'?'active':''}" data-task-filter="open">待处理</button><button class="chip ${taskFilter==='done'?'active':''}" data-task-filter="done">已完成</button><span class="result-count">${tasks.length} 项</span><button data-action="new-task">＋ 新建待办</button></div><p class="help">提醒时间按北京时间显示。服务运行时生成到期提醒；浏览器通知需保持页面打开，macOS 系统通知可在设置中开启。</p>${tasks.length?'<div class="task-list">'+tasks.map(t=>taskRow(t)).join('')+'</div>':textEmpty('清单很轻，心里也轻','添加待办并确认提醒时间，重要的事会在这里等你。')}`;}
+function messagesView(){return `<div class="panel"><div class="section-title"><h2>原始消息 <small>${state.messages.length} 条 · 最多显示最近 500 条</small></h2></div>${state.messages.length?state.messages.map(m=>`<article class="record"><small>${esc(m.group_name)} · ${esc(m.sender)} · ${fmt(m.sent_at)} · ${esc(m.source)} · ${{pending:'等待 AI 分析',running:'AI 分析中',done:'AI 已分析',failed:'AI 分析失败',skipped:'已取消群，跳过 AI'}[m.analysis_state]||'本地规则'}</small><p>${esc(m.content)}</p>${m.analysis_error?`<small class="warning">${esc(m.analysis_error)}</small>`:''}</article>`).join(''):textEmpty('没有匹配的记录','导入后，所有原始文本都会保存在本机。')}</div>`;}
+function connectionsView(){const s=state.settings;return `${nativePanel()}<details class="panel"><summary>旧接入方式：NapCat（主号已停用）</summary>${napcatPanel()}</details><div class="connection-hero"><div><h2>从「手动整理」到「自动收纳」</h2><p>已有文件选一个目录；新的群聊消息接入后持续收取。</p></div><span>⇄</span></div><div class="two-columns"><section class="panel"><div class="section-title"><h2>文件夹自动监听</h2><span class="badge">开箱可用</span></div><p>选定本机资料目录。每 10 秒扫描一次，自动导入新文件及内容变化；相同内容不会重复收纳。仅扫描当前目录，不包含子文件夹。</p><form id="watch-form" class="form-grid"><label>文件夹完整路径<input name="path" placeholder="例如 /Users/你的用户名/Downloads/群资料" required></label><label>内容类型<select name="mode"><option value="file">资料文件：索引文件名与正文</option><option value="chat">聊天记录：提取消息与重要信息</option></select></label><label>归属群聊<input name="group_name" placeholder="例如 工作交流群" required></label><button class="primary" type="submit">开始监听</button></form><div class="help">支持 TXT、MD、JSON、CSV、LOG、PDF、DOCX；单文件 20 MB，目录最多 1,000 个支持的文件。不会读取 QQ 的加密聊天数据库。</div>${state.watches.map(w=>`<div class="watch-card"><strong>${esc(w.path)}</strong><p>${esc(w.group_name)} · ${w.mode==='chat'?'聊天记录':'资料文件'} · ${w.enabled?'监听中':'已暂停'} · 最近扫描 ${fmt(w.last_scan)}</p>${w.error?`<p class="warning">${esc(w.error)}</p>`:''}<button data-action="watch-toggle" data-id="${w.id}">${w.enabled?'暂停监听':'继续监听'}</button></div>`).join('')}</section><section class="panel"><div class="section-title"><h2>QQ 消息自动接入</h2><span class="badge amber">需外部适配端</span></div><div class="status-line"><span class="dot"></span>${s.bridge_enabled?'接收端已启用':'接收端未启用'} · ${s.last_event?'最近收到消息 '+fmt(s.last_event):'尚未收到群消息'}</div><p>支持 OneBot v11 HTTP 上报，例如已有的 NapCat 适配端。配置后只接收指定群的新消息，无需逐次导入。</p><div class="connection-steps"><div class="step"><div><strong>准备并登录外部 QQ 适配端</strong><p>本软件不包含 QQ 登录组件；第三方适配端的稳定性和账号限制需自行评估。</p></div></div><div class="step"><div><strong>配置 HTTP Webhook 上报</strong><p>使用下方接收地址与凭据，消息格式选择 Array。仅连接本机适配端。</p></div></div><div class="step"><div><strong>填入要接入的群号</strong><p>只保存这些群的新消息。历史聊天不会自动补齐；群文件事件只登记文件名，正文需实际导入。</p></div></div></div><form id="bridge-form" class="form-grid"><label>接入群号（英文逗号分隔）<input name="groups" value="${esc(s.bridge_groups.join(','))}" placeholder="123456789,987654321"></label><label class="checkbox-label"><input type="checkbox" name="enabled" ${s.bridge_enabled?'checked':''}>启用自动接入</label><button class="primary" type="submit">保存接入配置</button></form><div class="inline-actions"><button data-action="bridge-details">显示接收地址与凭据</button></div><div id="bridge-details"></div><p class="help">QQ 官方机器人接入另有权限要求，第一版尚未实现官方 SDK 连接。此处是独立接收适配器，不是 QQ 官方客户端插件。</p></section></div>`;}
+function nativePanel(){
+  const n=nativeState||{}, signals=n.signals||{}, hooked=!!signals['callback_hooked:onRecvMsg'];
+  const incompatible=!hooked&&Object.keys(signals).some(key=>key.startsWith('unwritable:'));
+  const phase=!n.enabled?'客户端插件已暂停':!n.connected?'等待 QQ 客户端插件连接':incompatible?'当前 QQ 接口不兼容，消息尚未开始收集':!hooked?'插件已连接，正在验证消息监听':!n.account_matches?'监听已就绪，等待新消息确认绑定账号':'客户端消息监听已连接';
+  return `<section id="native-panel" class="panel"><div class="section-title"><h2>在正常 QQ 中收集消息</h2><span class="badge">同一客户端 · 实验版</span></div><p>使用你正常登录的 QQ，不额外登录容器。只收集指定群，新消息继续进入原文保存和 AI 分析。</p><div class="status-line"><span class="dot"></span>${phase}</div><p>本次已保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 已选 ${state.settings.bridge_groups.length} 个群</p><small>${n.platform?esc(n.platform)+' / '+esc(n.architecture)+' · ':''}最近心跳 ${fmt(n.last_seen)} · 客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}<p class="help">连通仅表示插件在运行；后台群消息覆盖和正常聊天需要实测。旧 NapCat 容器保持停止，不要再用主号登录第二份 QQ。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(connectorState?.selected_account||'')}" placeholder="用于核对插件登录账号" required></label><label>接收群号（英文逗号分隔）<input name="groups" value="${esc(state.settings.bridge_groups.join(','))}" required></label><button type="submit">保存接收范围</button></form><div class="inline-actions"><button data-action="native-toggle">${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
+}
+function napcatPanel(){
+  const c=connectorState;
+  if(!c)return '<div id="napcat-panel" class="panel"><p>正在检查本机 NapCat 连接…</p></div>';
+  const current=c.account&&c.selected_account===c.account.user_id;
+  const selected=current?c.selected:[];
+  return `<section id="napcat-panel" class="panel"><div class="section-title"><h2>NapCat 实时连接</h2><span class="badge ${c.status==='online'?'':'amber'}">${esc(({disabled:'未启用',connecting:'连接中',waiting_login:'等待 QQ 登录',online:'已连接 QQ',disconnected:'等待重连'})[c.status])}</span></div><p id="connector-message">${esc(c.message)}</p><p class="help">已保存 ${c.selected.length} 个目标群 · ${c.collecting?'收集配置已启用':'收集已暂停'}。QQ 登录恢复后会自动继续。</p><div class="two-columns"><div><div class="connection-steps"><div class="step"><div><strong>启动并登录 NapCat</strong><p><a href="http://127.0.0.1:6099/webui" target="_blank" rel="noopener">打开本机 NapCat 登录页 ↗</a>，用手机 QQ 扫码。登录会话仅保存在本机容器数据目录。</p></div></div><div class="step"><div><strong>勾选需要收集的群</strong><p>保存后持续收集新消息，断线自动重连。历史记录不自动补齐，电脑休眠或 QQ 掉线时无法收集。</p></div></div></div><details><summary>连接设置</summary><form id="connector-form" class="form-grid"><label>本机 WebSocket 地址<input name="url" value="${esc(c.url)}" required></label><label>OneBot Token<input type="password" name="token" autocomplete="off" placeholder="${c.configured?'已保存，留空保持不变':'填写 NapCat WebSocket Token'}"></label><label class="checkbox-label"><input type="checkbox" name="enabled" ${c.enabled?'checked':''}>启用持续连接</label><button type="submit" class="primary">保存连接</button></form></details><p class="help">本次连接已保存 ${c.saved} 条记录 · 最近收到所选群消息 ${fmt(c.last_saved)}。未选群的消息不入库。</p></div><div><div class="section-title"><h2>${c.account?esc(c.account.nickname)+' · '+esc(c.account.user_id):'扫码后在这里选择群'}</h2><button data-action="refresh-groups">刷新群列表 ↻</button></div>${c.account&&!current&&c.selected.length?'<p class="warning">当前账号与原选择不同，请重新选择要收集的群。</p>':''}<form id="groups-form" class="form-grid"><div class="group-picker">${c.groups.length?c.groups.map(g=>`<label class="checkbox-label"><input type="checkbox" name="group" value="${esc(g.group_id)}" ${selected.includes(g.group_id)?'checked':''}><span>${esc(g.group_name)}<small>${esc(g.group_id)} · ${esc(g.member_count)} 人</small></span></label>`).join(''):'<p class="help">尚未读取到群列表。先完成 NapCat 登录并连接，再点击刷新。</p>'}</div><button class="primary" type="submit" ${c.status==='online'?'':'disabled'}>保存所选群并自动收集</button><small>取消全部勾选并保存可暂停收集。只保存新到达的指定群消息及群文件元数据。</small></form></div></div></section>`;
+}
+async function refreshConnector(force=false){
+  try{
+    const [c,n]=await Promise.all([api('/api/connector'),api('/api/native')]);
+    nativeState=n;
+    if(view==='connections'&&$('#native-panel')&&!document.activeElement.closest?.('#native-groups-form'))$('#native-panel').outerHTML=nativePanel();
+    if(c.status==='online'&&c.collecting&&c.account?.user_id===c.selected_account&&c.selected.length){
+      c.message='正在自动收集所选群的新消息';
+    }
+    const signature=JSON.stringify([c.status,c.account,c.groups,c.selected,c.selected_account,c.enabled,c.url,c.saved,c.last_saved]);
+    const sameAccount=connectorState?.account?.user_id===c.account?.user_id;
+    const draft=new Map(sameAccount&&!force?Array.from(document.querySelectorAll('#groups-form input[name=group]'),input=>[input.value,input.checked]):[]);
+    connectorState=c;
+    const active=document.activeElement;
+    const busy=active.closest?.('#connector-form') || (active.closest?.('#groups-form') && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName));
+    if(view==='connections'&&(!busy||force)&&signature!==connectorSignature){
+      const panel=$('#napcat-panel');
+      if(panel){
+        panel.outerHTML=napcatPanel();
+        document.querySelectorAll('#groups-form input[name=group]').forEach(input=>{if(draft.has(input.value))input.checked=draft.get(input.value);});
+      }
+      connectorSignature=signature;
+    }else if(view==='connections'&&$('#connector-message'))$('#connector-message').textContent=c.message;
+  }catch(error){if(view==='connections'&&$('#connector-message'))$('#connector-message').textContent='连接状态读取失败：'+error.message;}
+}
+function settingsView(){return `${modelPanel()}<div class="two-columns"><section class="panel"><h2>你关心什么？</h2><p>适用于各种类型的群。匹配关注词的消息会出现在重要信息里，不需要先选择群类型。</p><form id="settings-form" class="form-grid"><label>个人关注词<textarea name="interests" placeholder="Python, 招聘, 摄影, 志愿活动">${esc(state.settings.interests)}</textarea><small>用逗号或换行分隔。保存后更新本地规则结果，并用于后续 AI 分析；已有 AI 结果和待办保留。</small></label><button class="primary" type="submit">保存并重新分析</button></form></section><section class="panel"><h2>提醒方式</h2><p>站内提醒始终开启，并保存在本机。重启服务后会补记未处理的到期提醒。</p><div class="form-grid"><button data-action="enable-browser">开启浏览器通知</button><small>需要浏览器支持并授权，且页面保持打开。当前：${'Notification' in window?esc(Notification.permission):'浏览器不支持'}</small><label class="checkbox-label"><input type="checkbox" id="native-notifications" ${state.settings.native_notifications?'checked':''}>启用 macOS 系统通知</label><small>关闭页面后仍可提醒，但后台服务必须运行（本机已配置登录自启动）；系统休眠时无法准时通知。其他系统请使用站内或浏览器提醒。</small>${state.settings.notification_error?`<p class="warning">${esc(state.settings.notification_error)}</p>`:''}</div></section></div><div class="panel"><h2>清楚知道软件做了什么</h2><p>未开启模型时使用本地规则；开启后按配置接口分析已选群的新消息及少量同群上下文。模型结果会核验原文引用，摘要仍可能有误。原文与附件存储在项目 data 目录；此版本不包含数据库加密。图片 OCR、语音转写、全文讨论归纳、冲突合并和语义搜索尚未支持；模型不读取未下载的附件或链接正文。</p><p>识别出的时间需要你确认后才会建立提醒；变更消息不会自动修改已有待办。所有分类和摘要均为辅助信息，请以原文为准。</p></div>`;}
+function modelStatus(){
+  const m=state.llm||{}, c=m.counts||{};
+  const phase=!m.configured?'等待配置模型':m.enabled?'自动分析已开启':!m.tested?'等待连接测试':'自动分析已暂停';
+  return `<div class="section-title"><h2>${phase}</h2><button data-view="settings">模型设置 →</button></div><p>已分析 ${c.done||0} 条 · 排队 ${c.pending||0} 条 · 分析中 ${c.running||0} 条 · 失败 ${c.failed||0} 条${c.skipped?' · 已取消群跳过 '+c.skipped+' 条':''}</p><small>过去 24 小时已调用 ${m.calls_today||0} / ${m.daily_limit||300} 次${m.model?' · '+esc(m.model):''}。${m.calls_today>=m.daily_limit?'已达上限，剩余消息保留排队。':'规则识别和原文保存持续运行。'}</small>${m.error?`<p class="warning">${esc(m.error)}</p>`:''}`;
+}
+function modelPanel(){
+  const m=state.llm||{};
+  return `<section class="panel"><div class="section-title"><h2>让 AI 帮你整理群消息</h2><span class="badge">通知 · 待办 · 资料</span></div><p>启用后自动分析所选群的新消息，保留逐字原文依据。发送内容包括新消息、最多 7 条同群近期上下文和关注词；不发送全部历史、附件正文或其他群。调用费用由所选服务计收。</p><div id="model-status" class="model-status">${modelStatus()}</div><form id="model-form" class="form-grid"><label>快速填写<select id="model-preset"><option value="">选择服务，或手动填写</option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="local">本机兼容接口</option></select></label><label>接口基础地址<input name="url" type="url" required value="${esc(m.url)}" placeholder="https://api.deepseek.com"><small>填写基础地址，不包含 /chat/completions。服务需支持 Chat Completions 与 JSON 输出。</small></label><label>模型名称<input name="model" required value="${esc(m.model)}" placeholder="填写服务提供的模型 ID"></label><label>API Key<input name="key" type="password" autocomplete="new-password" placeholder="${m.has_key?'已保存，留空则保持原密钥':'仅保存在本机，不会回显'}"><small>请直接在这里填写；使用免密本机服务可留空。更换服务地址时需重新填写密钥。</small></label><label class="checkbox-label"><input name="clear_key" type="checkbox">清除已保存的密钥（例如切换本机模型）</label><label>过去 24 小时调用上限<input name="daily_limit" type="number" min="1" max="5000" value="${m.daily_limit||300}" required><small>每条新消息一次调用，失败最多尝试 3 次；测试也计入上限。这是次数限制，不是金额预算。</small></label><div class="inline-actions"><button type="submit" class="primary">保存、测试并启用</button><button type="button" data-action="model-pause">暂停 AI 分析</button><button type="button" data-action="model-retry">重试失败消息</button></div><p id="model-test-result" role="status">${esc(m.test_error||'测试只发送内置的虚构通知，成功后开始分析排队的新消息。')}</p></form><p class="help">队列从本功能安装后接收的新消息开始；暂停期间继续排队，恢复后处理。取消勾选群后，尚未发送的消息会跳过。密钥保存在本机数据库，请勿分享 data 目录。</p></section>`;
+}
+function evidenceHTML(item){
+  let refs=[];try{refs=JSON.parse(item.evidence||'[]');}catch(_){}
+  if(!refs.length)return '';
+  return `<h3>逐字引用依据</h3>${refs.map(r=>`<div class="evidence"><small>消息 #${esc(r.message_id)} · ${esc(r.sender)} · ${fmt(r.sent_at)}</small><blockquote>${esc(r.quote)}</blockquote><details><summary>查看对应消息片段</summary><div class="source-text">${esc(r.content)}</div></details></div>`).join('')}<p class="help">模型：${esc(item.model)}。原文匹配已核验；分类和摘要仍需结合上下文判断。</p>`;
+}
+function openModal(title, body){$('#modal-content').innerHTML=`<div class="modal-head"><h2>${esc(title)}</h2><button data-action="close-modal" aria-label="关闭">×</button></div><div class="modal-body">${body}</div>`;if(!modal.open)modal.showModal();}
+function importDialog(mode='chat'){
+  openModal('把内容带进来',`<form id="import-form" class="form-grid"><label>导入内容类型<select name="mode" id="import-mode"><option value="chat" ${mode==='chat'?'selected':''}>聊天记录 · 提取重要信息</option><option value="file" ${mode==='file'?'selected':''}>资料文件 · 建立正文索引</option></select></label><label>归属群聊<input name="group_name" placeholder="例如 学习群 / 项目群 / 兴趣社群" value="${esc($('#group-filter').value)}" required></label><div class="dropzone" id="dropzone"><strong>拖入文件，或点击选择</strong><p>聊天：TXT / JSON / CSV；资料：PDF / DOCX / 文本等<br>支持批量导入，单个文件不超过 20 MB</p><input type="file" name="files" id="import-files" multiple aria-label="选择导入文件"></div><div class="divider">也可以直接粘贴聊天内容</div><label><textarea name="text" id="paste-text" placeholder="2026-11-14 09:00:00 张同学\n通知：请于明天 18:00 前提交报名表。\n\n或直接粘贴一段消息（无发送时间的相对日期需手动确认）"></textarea></label><p class="help">JSON 使用 messages 数组，消息字段为 content、sender、timestamp、group_name。CSV 使用同名表头。</p><div id="import-result" class="progress-log" hidden></div><div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button class="primary" type="submit">开始导入</button></div></form>`);
+  const zone=$('#dropzone');
+  zone.addEventListener('dragover',event=>{event.preventDefault();zone.classList.add('drag');});
+  zone.addEventListener('dragleave',()=>zone.classList.remove('drag'));
+  zone.addEventListener('drop',event=>{event.preventDefault();zone.classList.remove('drag');$('#import-files').files=event.dataTransfer.files;});
+}
+function datetimeInput(value){if(!value)return '';const d=new Date(value);return new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(d).replace(' ','T');}
+function taskDialog(insight=null, task=null){
+  openModal(task?'编辑待办':'确认并添加待办',`<form id="task-form" class="form-grid" data-task-id="${task?.id||''}" data-insight-id="${insight?.id||''}"><label>待办内容<textarea name="title" required maxlength="300">${esc(task?.title||insight?.title||'')}</textarea></label><label>提醒时间（北京时间）<input type="datetime-local" name="due" value="${datetimeInput(task?.due||insight?.due)}"><small>${esc(insight?.date_note||'不设置时间也可以保存为待办；设置后将在该时间提醒。')}</small></label><div id="task-error" class="form-error"></div><div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button type="submit" class="primary">${task?'保存修改':'确认添加'}</button></div></form>`);
+}
+function sourceDialog(i){openModal('原文与识别依据',`<div class="source-meta">${esc(i.group_name)} · ${esc(i.sender||'')} · ${fmt(i.sent_at)}</div><div class="source-text">${esc(i.content)}</div>${evidenceHTML(i)}${i.reason?`<div class="reason">${esc(i.reason)}</div>`:''}<p class="help">来源：${esc(i.source||'关联的原始消息')}</p>${i.id&&i.kind?`<div class="modal-actions"><button data-action="read" data-id="${i.id}">标记已读</button><button data-action="dismiss" data-id="${i.id}">${i.status==='dismissed'?'恢复显示':'不感兴趣'}</button></div>`:''}`);}
+async function handleAction(action,id){
+  const i=state.insights.find(x=>x.id===id),t=state.tasks.find(x=>x.id===id),f=state.files.find(x=>x.id===id);
+  switch(action){
+    case 'close-modal':modal.close();return;
+    case 'import':importDialog();return;
+    case 'import-files':importDialog('file');return;
+    case 'source':sourceDialog(i);return;
+    case 'task-source':sourceDialog(t);return;
+    case 'new-task':taskDialog();return;
+    case 'task-from':taskDialog(i);return;
+    case 'task-edit':taskDialog(null,t);return;
+    case 'task-toggle':await api('/api/tasks/'+id,{status:t.status==='done'?'open':'done'});toast(t.status==='done'?'待办已重新打开':'已完成，做得好。');break;
+    case 'snooze':await api('/api/tasks/'+id,{snooze:true});toast('将在 30 分钟后再次提醒');break;
+    case 'save':await api('/api/insight',{id,status:i.status==='saved'?'new':'saved'});break;
+    case 'read':await api('/api/insight',{id,status:'read'});modal.close();break;
+    case 'dismiss':await api('/api/insight',{id,status:i.status==='dismissed'?'new':'dismissed'});modal.close();break;
+    case 'file-detail':openModal(f.name,`<div class="source-meta">${esc(f.group_name)} · ${bytes(f.size)} · ${esc(f.parse_status)}</div><div class="source-text">${esc(f.excerpt||'尚无可预览正文。可下载本地保存的原文件查看；实时群文件事件尚未取得附件内容。')}</div><p class="help">这里只显示正文片段；搜索覆盖已提取的全文。来源：${esc(f.source)}</p>${f.parse_status.startsWith('待获取')?'':`<div class="modal-actions"><a class="primary" href="/api/download/${f.id}" download>下载原文件</a></div>`}`);return;
+    case 'watch-toggle':{const w=state.watches.find(x=>x.id===id);await api('/api/watch-toggle',{id,enabled:!w.enabled});break;}
+    case 'refresh-groups':await api('/api/connector/refresh',{});toast('正在刷新 QQ 登录状态与群列表');return;
+    case 'bridge-details':{const b=await api('/api/bridge');$('#bridge-details').innerHTML=`<p class="help">Webhook 地址</p><div class="code-box">${esc(b.url)}</div><p class="help">Token / Secret（不要公开分享）</p><div class="code-box">${esc(b.token)}</div><p class="help">支持 Authorization: Bearer Token 或 OneBot X-Signature（HMAC-SHA1，Secret 使用上述凭据）。</p>`;return;}
+    case 'notification-read':await api('/api/notifications/read',{id});await refresh();showNotifications();return;
+    case 'enable-browser':if(!('Notification' in window))throw Error('当前浏览器不支持系统通知');{const p=await Notification.requestPermission();if(p==='granted')localStorage.setItem('qqm-browser-notifications','on');toast(p==='granted'?'浏览器通知已启用':'通知未获授权，站内提醒仍会保留');render();return;}
+    case 'native-toggle':await api('/api/native/settings',{enabled:!nativeState?.enabled});await refreshConnector();return;
+    case 'model-pause':await api('/api/llm/pause',{});toast('AI 分析已暂停；新消息继续入库并排队');break;
+    case 'model-retry':await api('/api/llm/retry',{});toast('失败消息已重新排队；需启用模型才会处理');break;
+    case 'demo':await importDemo();break;
+  }
+  await refresh();
+}
+function showNotifications(){openModal('到期提醒',state.notifications.length?state.notifications.map(n=>`<div class="notification-item"><p>${esc(n.title)}<small>${fmt(n.created)}</small></p><button data-action="notification-read" data-id="${n.id}">知道了</button></div>`).join(''):'<p>暂时没有未读提醒。你可以在待办中设置提醒时间。</p>');}
+async function importDemo(){
+  const rows=[{group_name:'示例 · 设计协作群',sender:'林晓',timestamp:'2026-11-14T09:30:00+08:00',content:'项目通知：请于 2026年11月20日 18:00 前提交新版本界面设计稿，并在群里确认。'},{group_name:'示例 · 技术交流群',sender:'阿泽',timestamp:'2026-11-14T10:12:00+08:00',content:'分享一份 Python 数据分析入门资料，包含数据清洗、可视化和常见问题解答。'},{group_name:'示例 · 城市摄影群',sender:'小雨',timestamp:'2026-11-14T11:08:00+08:00',content:'周末摄影活动改期：因天气原因，集合时间调整为 2026年11月22日 09:00，地点仍在公园南门。'},{group_name:'示例 · 技术交流群',sender:'陈同学',timestamp:'2026-11-14T11:40:00+08:00',content:'解决方法：如果 CSV 打开后中文乱码，请尝试使用 UTF-8 编码重新导出。'},{group_name:'示例 · 设计协作群',sender:'林晓',timestamp:'2026-11-14T12:00:00+08:00',content:'大家中午好！'}];
+  await api('/api/import',{name:'示例记录.json',text:JSON.stringify(rows),mode:'chat',group_name:'示例'});
+  await api('/api/import',{name:'Python 数据分析学习路线.md',text:'# Python 数据分析学习路线\n\n第一阶段：Python 基础与 CSV 文件读取。\n第二阶段：使用 pandas 清洗数据，处理缺失值与重复记录。\n第三阶段：使用 matplotlib 做数据可视化。\n建议先完成一个自己的学习项目。',mode:'file',group_name:'示例 · 技术交流群'});
+  toast('示例已导入；示例群均有明确标记，未自动创建提醒。');
+}
+async function fileBase64(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=()=>reject(Error('文件读取失败'));r.readAsDataURL(file);});}
+document.addEventListener('click',async event=>{
+  const button=event.target.closest('button,a');if(!button)return;
+  if(button.dataset.view){event.preventDefault();setView(button.dataset.view);return;}
+  if(button.dataset.category){category=button.dataset.category;render();return;}
+  if(button.dataset.taskFilter){taskFilter=button.dataset.taskFilter;render();return;}
+  if(button.dataset.action){try{await handleAction(button.dataset.action,Number(button.dataset.id));}catch(error){toast(error.message);}}
+});
+document.addEventListener('submit',async event=>{
+  event.preventDefault();const form=event.target, data=new FormData(form),submit=form.querySelector('[type=submit]');
+  if(submit)submit.disabled=true;
+  try{
+    if(form.id==='import-form'){
+      const files=Array.from($('#import-files').files),text=data.get('text').trim(),mode=data.get('mode');
+      if(!files.length&&!text)throw Error('请选择文件或粘贴聊天内容');
+      if(text&&mode!=='chat')throw Error('粘贴内容用于聊天记录，请切换为聊天类型或清空粘贴区');
+      const log=$('#import-result');log.hidden=false;log.textContent='正在导入…\n';let successes=0;
+      const upload=async body=>{try{const r=await api('/api/import',body);successes++;log.textContent+=`${body.name}：新增 ${r.messages??r.files??0} 条，重复 ${r.duplicates||0} 条${r.insights!==undefined?'，重要信息 '+r.insights+' 条':''}${r.parse_status?'，'+r.parse_status:''}\n`;}catch(error){log.textContent+=body.name+'：失败 · '+error.message+'\n';}};
+      for(const file of files){if(file.size>20*1024*1024){log.textContent+=file.name+'：超过 20 MB，已跳过\n';continue;}await upload({name:file.name,data:await fileBase64(file),mode,group_name:data.get('group_name')});}
+      if(text)await upload({name:'粘贴记录.txt',text,mode:'chat',group_name:data.get('group_name')});
+      await refresh();toast(`导入处理结束，${successes} 份内容成功。详情见导入结果。`);
+    }else if(form.id==='task-form'){
+      const due=data.get('due');const body={title:data.get('title'),due:due?due+':00+08:00':null};
+      if(form.dataset.insightId)body.insight_id=Number(form.dataset.insightId);
+      await api('/api/tasks'+(form.dataset.taskId?'/'+form.dataset.taskId:''),body);modal.close();await refresh();toast('待办已保存');
+    }else if(form.id==='watch-form'){
+      await api('/api/watches',Object.fromEntries(data));await refresh();toast('监听已添加，将在 10 秒内扫描');
+    }else if(form.id==='bridge-form'){
+      const groups=data.get('groups').split(/[,，\s]+/).filter(Boolean);if(data.get('enabled')&&!groups.length)throw Error('请先填写至少一个接入群号');
+      await api('/api/settings',{bridge_enabled:!!data.get('enabled'),bridge_groups:groups});await refresh();toast('接入配置已保存');
+    }else if(form.id==='connector-form'){
+      await api('/api/connector/settings',{url:data.get('url'),token:data.get('token'),enabled:!!data.get('enabled')});
+      toast('连接设置已保存');await refreshConnector(true);
+    }else if(form.id==='groups-form'){
+      await api('/api/connector/groups',{groups:data.getAll('group')});
+      toast('群选择已保存；之后只收集所选群的新消息');await refresh();await refreshConnector(true);
+    }else if(form.id==='native-groups-form'){
+      await api('/api/native/pair',{account:data.get('account').trim(),groups:data.get('groups').split(/[,，\s]+/).filter(Boolean)});await refresh();await refreshConnector(true);toast('账号与接收范围已保存，可从应用菜单打开插件安装助手');
+    }else if(form.id==='model-form'){
+      $('#model-test-result').textContent='正在保存配置并用虚构通知测试，最长约 45 秒…';
+      await api('/api/llm/config',{url:data.get('url'),model:data.get('model'),key:data.get('key'),clear_key:!!data.get('clear_key'),daily_limit:Number(data.get('daily_limit'))});
+      form.querySelector('[name=key]').value='';
+      const result=await api('/api/llm/test',{enable:true});
+      await refresh();toast(result.message);
+    }else if(form.id==='settings-form'){
+      await api('/api/settings',{interests:data.get('interests')});await refresh();toast('关注词已保存，历史消息已重新分析');
+    }
+  }catch(error){if(form.id==='task-form')$('#task-error').textContent=error.message;else if(form.id==='model-form'){if($('#model-test-result'))$('#model-test-result').textContent='未启用：'+error.message;await refresh(false);}else toast(error.message);}
+  finally{if(submit)submit.disabled=false;}
+});
+document.addEventListener('change',async event=>{if(event.target.id==='model-preset'){
+  const presets={deepseek:['https://api.deepseek.com','deepseek-flash'],openai:['https://api.openai.com/v1',''],local:['http://127.0.0.1:11434/v1','']};
+  const p=presets[event.target.value];if(p){const f=$('#model-form');f.elements.url.value=p[0];f.elements.model.value=p[1];}
+}
+if(event.target.id==='native-notifications'){try{await api('/api/settings',{native_notifications:event.target.checked});toast('系统通知设置已保存');}catch(error){event.target.checked=!event.target.checked;toast(error.message);}}});
+$('#import-button').addEventListener('click',()=>importDialog());
+$('#notifications-button').addEventListener('click',showNotifications);
+$('#search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refresh(),220);});
+$('#group-filter').addEventListener('change',()=>refresh());
+window.addEventListener('hashchange',()=>{view=labels[location.hash.slice(1)]?location.hash.slice(1):'home';render();});
+window.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();$('#search').focus();}});
+async function boot(){try{csrf=(await api('/api/session')).csrf;view=labels[location.hash.slice(1)]?location.hash.slice(1):'home';await refresh();await refreshConnector(true);setInterval(()=>{refreshConnector();const busy=modal.open||['connections','settings'].includes(view)||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);refresh(!busy);},5000);}catch(error){notice(error.message);}}
+boot();

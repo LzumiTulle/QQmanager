@@ -1,0 +1,14 @@
+.venv/
+data/
+__pycache__/
+*.pyc
+.DS_Store
+dist/
+node_modules/
+build/
+release/
+*.spec
+.env
+.env.*
+!.env.example
+docs/preview.jpg

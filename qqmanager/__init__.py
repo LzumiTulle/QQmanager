@@ -1,0 +1,1 @@
+"""QQmanager: local chat intelligence."""
