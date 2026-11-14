@@ -128,7 +128,7 @@ class StoreTests(unittest.TestCase):
         self.store.add_watch({'path':str(folder),'mode':'chat','group_name':'群'})
         self.store.scan_watches();self.store.scan_watches()
         self.assertEqual(self.store.snapshot()['counts']['messages'],1)
-        file.write_text(file.read_text()+'\n2026-11-14 10:00:00 李四\n活动报名开始',encoding='utf-8')
+        file.write_text(file.read_text(encoding='utf-8')+'\n2026-11-14 10:00:00 李四\n活动报名开始',encoding='utf-8')
         os.utime(file,(time.time()-5,time.time()-5))
         self.store.scan_watches()
         self.assertEqual(self.store.snapshot()['counts']['messages'],2)

@@ -28,6 +28,8 @@ def atomic(path, data, mode=0o600):
     tmp.write_bytes(data);tmp.chmod(mode);os.replace(tmp,path)
 
 def main():
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):stream.reconfigure(encoding="utf-8", errors="replace")
     p=argparse.ArgumentParser()
     p.add_argument('action',choices=['prepare','install','restore','status'])
     p.add_argument('--app',default='/Applications/QQ.app')
@@ -57,7 +59,7 @@ setImmediate(()=>{try {if(global.launcher?.installPathPkgJson)global.launcher.in
         atomic(stage/'bootstrap.cjs',text.encode())
         print('准备完成：QQ '+str(parsed.get('version'))+'；原版入口未修改；已生成可恢复的安装计划。');return
     if a.action=='restore':
-        backup=json.loads((stage/'backup.json').read_text())
+        backup=json.loads((stage/'backup.json').read_text(encoding='utf-8'))
         if str(package)!=backup['package']:raise SystemExit('备份目标不一致')
         if sha(current)!=backup['installed_sha256']:
             if sha(current)==backup['original_sha256']:print('QQ 已是备份时的原版入口。');return
@@ -65,7 +67,7 @@ setImmediate(()=>{try {if(global.launcher?.installPathPkgJson)global.launcher.in
         atomic(package,base64.b64decode(backup['original']),backup['mode'])
         if bootstrap.exists() and sha(bootstrap.read_bytes())==backup['bootstrap_sha256']:bootstrap.unlink()
         print('已恢复原版 QQ 入口；插件配置与原始记录保留。下次启动 QQ 生效。');return
-    plan=json.loads((stage/'plan.json').read_text())
+    plan=json.loads((stage/'plan.json').read_text(encoding='utf-8'))
     if plan['app']!=str(app) or sha(current)!=plan['package_sha256'] or parsed.get('main')!=ORIGINAL_MAIN:
         raise SystemExit('QQ 版本或入口在准备后有变化，请重新核查。')
     if bootstrap.exists():raise SystemExit('入口扩展文件已存在，停止覆盖。')
