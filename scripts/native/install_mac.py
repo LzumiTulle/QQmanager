@@ -1,5 +1,6 @@
 """Reversible, source-only extension loader for this Mac's existing QQ app."""
 import argparse
+import sys
 import base64
 import hashlib
 import json
