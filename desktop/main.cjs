@@ -46,6 +46,7 @@ function menu(){
 }
 function rebuildMenu(){tray?.setContextMenu(Menu.buildFromTemplate(menu()));Menu.setApplicationMenu(Menu.buildFromTemplate([{label:'QQmanager',submenu:menu()},{label:'编辑',submenu:[{role:'undo'},{role:'redo'},{type:'separator'},{role:'cut'},{role:'copy'},{role:'paste'},{role:'selectAll'}]},{label:'视图',submenu:[{role:'reload'},{role:'resetZoom'},{role:'zoomIn'},{role:'zoomOut'}]}]));}
 async function start(){
+ if(process.platform==='win32')app.setAppUserModelId('io.github.lzumitulle.qqmanager');
  fs.mkdirSync(app.getPath('userData'),{recursive:true,mode:0o700});
  try{prefs=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'desktop.json'),'utf8'));}catch{}
  service=new Service({resources:process.resourcesPath,packaged:app.isPackaged,dataDirectory:prefs.dataDirectory||path.join(app.getPath('userData'),'data'),root:path.join(__dirname,'..')});

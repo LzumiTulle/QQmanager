@@ -45,6 +45,8 @@ jobs:
       - run: npm run dist:${{ matrix.target }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - if: runner.os == 'Windows'
+        run: python scripts/desktop/smoke_windows_install.py
       - run: python scripts/desktop/audit_release.py
       - uses: actions/upload-artifact@v4
         with:
