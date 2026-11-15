@@ -98,3 +98,22 @@ test('immutable native exports keep receivers, reflection, listener removal and 
  msgService.removeKernelMsgListener(cb);assert.equal(removed,registered);
  const failing=Object.freeze({onRecvMsg(){throw failure;}});msgService.addKernelMsgListener(failing);assert.throws(()=>registered.onRecvMsg([]),e=>e===failure);assert.equal(events.length,1);
 });
+test('group list observer preserves QQ callbacks and exposes only a read-only refresh',async()=>{
+ const {normalizeGroups}=require('../plugins/qqmanager-native/core.cjs');
+ let registered,removed,reader,identity;const updates=[],calls=[];
+ const service=Object.freeze({addKernelGroupListener(cb){assert.equal(this,service);registered=cb;return 17;},removeKernelGroupListener(cb){removed=cb;},getGroupList(forced){assert.equal(this,service);calls.push(forced);return Promise.resolve({result:0});},sendMessage(){assert.fail('must never send messages');}});
+ const session=Object.freeze({init(){},getGroupService(){return service;}});
+ const native=Object.freeze({NodeIQQNTWrapperSession:Object.freeze({create(){return session;}})});
+ const wrapped=observerExports(native,()=>{},()=>{},{update:(...args)=>updates.push(args),ready:(getAccount,read)=>{identity=getAccount;reader=read;}});
+ const observed=wrapped.NodeIQQNTWrapperSession.create();observed.init({selfUin:'777777'});
+ const callback=Object.freeze({onGroupListUpdate(...args){assert.equal(this,callback);return args;}});
+ const groupService=observed.getGroupService();assert.equal(groupService.addKernelGroupListener(callback),17);assert.deepEqual(calls,[]);
+ const rows=[{groupCode:'123456',groupName:'设计群',memberList:['private'],ownerUin:'private'}];
+ assert.deepEqual(registered.onGroupListUpdate(0,rows),[0,rows]);
+ assert.deepEqual(updates,[['777777',[{group_id:'123456',group_name:'设计群'}]]]);
+ assert.equal(identity(),'777777');await reader();assert.deepEqual(calls,[true]);
+ groupService.removeKernelGroupListener(callback);assert.equal(removed,registered);
+ assert.equal(normalizeGroups([{unexpected:'shape'}]),null);assert.deepEqual(normalizeGroups([]),[]);
+ const failure=Error('QQ callback');groupService.addKernelGroupListener({onGroupListUpdate(){throw failure;}});
+ assert.throws(()=>registered.onGroupListUpdate(0,rows),e=>e===failure);assert.equal(updates.length,1);
+});

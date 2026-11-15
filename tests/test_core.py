@@ -214,6 +214,13 @@ class HTTPTests(unittest.TestCase):
         result=json.load(self.request('/api/native/groups',{'groups':[]},headers))
         self.assertFalse(result['collecting']);self.assertEqual(self.store.setting('bridge_groups'),[])
 
+    def test_native_pairing_can_fetch_catalog_before_any_groups_are_selected(self):
+        result=json.load(self.request('/api/native/pair',{'account':'777777','groups':[]},{'X-CSRF-Token':self.csrf}))
+        self.assertEqual(result['groups'],[])
+        self.assertEqual(self.store.setting('ws_account'),'777777')
+        self.assertFalse(self.store.setting('bridge_enabled'))
+        self.assertTrue(self.store.setting('native_enabled'))
+
     def test_file_download_preserves_bytes(self):
         self.store.import_data('资料.txt','数据分析资料'.encode(),'群','file')
         f=self.store.snapshot()['files'][0]

@@ -10,6 +10,7 @@ class NativeBridge:
         self.report = {}
         self.received = self.saved = 0
         self.last_event = None
+        self.group_refresh = 0
 
     def group_catalog(self):
         s = self.store
@@ -20,6 +21,9 @@ class NativeBridge:
                 JOIN messages m ON m.id=j.message_id WHERE j.account=? ORDER BY m.id''', (account,)):
             if row['group_name'] != row['group_id']:
                 catalog[row['group_id']] = row['group_name']
+        synced = s.setting('native_group_catalog') or {}
+        if synced.get('account') == account:
+            catalog.update({g['group_id']:g['group_name'] for g in synced.get('groups',[])})
         selected = s.setting('bridge_groups')
         for group in selected:
             catalog.setdefault(group, '')
@@ -50,8 +54,32 @@ class NativeBridge:
             s.set_setting('native_enabled',True)
         return {'groups':s.setting('bridge_groups'),'collecting':bool(groups)}
 
+    def refresh_groups(self):
+        with self.lock:
+            self.group_refresh += 1
+        return {'requested':True}
+
     def heartbeat(self, body):
         s = self.store
+        catalog = body.get('group_catalog')
+        if catalog is not None:
+            if not isinstance(catalog,dict) or str(catalog.get('account'))!=s.setting('ws_account') or str(body.get('account'))!=s.setting('ws_account'):
+                raise ValueError('群列表账号与绑定账号不符')
+            groups=catalog.get('groups')
+            if type(catalog.get('revision')) is not int or not 0<=catalog['revision']<=100000000:
+                raise ValueError('群列表版本无效')
+            if not isinstance(groups,list) or len(groups)>1000:
+                raise ValueError('群列表格式无效')
+            normalized={}
+            for g in groups:
+                if not isinstance(g,dict):raise ValueError('群列表格式无效')
+                gid=g.get('group_id');name=g.get('group_name')
+                if not isinstance(gid,str) or not gid.isascii() or not gid.isdigit() or not 5<=len(gid)<=20 or not isinstance(name,str) or len(name)>100:
+                    raise ValueError('群列表内容无效')
+                normalized[gid]={'group_id':gid,'group_name':name}
+            prior=s.setting('native_group_catalog') or {}
+            if prior.get('account')!=catalog['account'] or prior.get('revision')!=catalog.get('revision') or prior.get('groups')!=list(normalized.values()):
+                s.set_setting('native_group_catalog',{'account':catalog['account'],'groups':list(normalized.values()),'revision':catalog.get('revision'),'updated':time.time()})
         # Allowlisted diagnostics; never persist arbitrary plugin data or credentials.
         report = {k: str(body.get(k, ''))[:100] for k in ('platform','architecture','version')}
         for k in ('events','selected','dropped','queued'):
@@ -67,7 +95,7 @@ class NativeBridge:
         with self.lock:
             self.report = report
         return {'enabled': bool(s.setting('native_enabled') and s.setting('bridge_enabled')),
-                'account': s.setting('ws_account'), 'groups': s.setting('bridge_groups')}
+                'account': s.setting('ws_account'), 'groups': s.setting('bridge_groups'), 'group_refresh':self.group_refresh}
 
     def events(self, body):
         s = self.store
@@ -104,8 +132,12 @@ class NativeBridge:
     def snapshot(self):
         with self.lock:
             report=dict(self.report)
+            catalog=self.store.setting('native_group_catalog') or {}
+            current=catalog.get('account')==self.store.setting('ws_account')
             report.update(enabled=bool(self.store.setting('native_enabled') and self.store.setting('bridge_enabled')),saved=self.saved,
                           received=self.received,last_event=self.last_event,
                           groups=self.group_catalog(),
+                          groups_updated=catalog.get('updated') if current else None,
+                          groups_count=len(catalog.get('groups',[])) if current else 0,
                           connected=bool(report.get('last_seen') and time.time()-report['last_seen']<35))
             return report

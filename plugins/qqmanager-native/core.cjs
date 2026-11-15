@@ -84,7 +84,17 @@ function installObserver(native, notify, diagnose=()=>{}) {
 // QQ 7.0.3 exposes immutable native methods. Keep those objects untouched and
 // interpose on the CommonJS export before QQ obtains it. Each facade has stable
 // identity; native methods always receive their real receiver (N-API requires it).
-function observerExports(native, notify, diagnose=()=>{}) {
+function normalizeGroups(rows) {
+  if(!Array.isArray(rows))return null;
+  const groups=new Map();
+  for(const row of rows.slice(0,1000)){
+    const id=numeric(row?.groupCode);
+    if(!id||id.length<5||id.length>20)continue;
+    groups.set(id,{group_id:id,group_name:String(row.groupName||id).slice(0,100)});
+  }
+  return rows.length&&!groups.size?null:[...groups.values()];
+}
+function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}) {
   if(!native?.NodeIQQNTWrapperSession)return native;
   const originals=new WeakMap(),sessions=new WeakMap(),services=new WeakMap();
   const unwrap=x=>x && (typeof x==='object'||typeof x==='function') ? originals.get(x)||x : x;
@@ -146,6 +156,34 @@ function observerExports(native, notify, diagnose=()=>{}) {
         }
         return services.get(result);
       }
+      if(name==='getGroupService'&&result){
+        if(!services.has(result)){
+          const listeners=new WeakMap();
+          const service=facade(result,(method,invoke,params,fn)=>{
+            if((method==='addKernelGroupListener'||method==='removeKernelGroupListener')&&params[0]&&typeof params[0]==='object'){
+              const cb=params[0];
+              if(method==='addKernelGroupListener'&&!listeners.has(cb)){
+                listeners.set(cb,facade(cb,(event,original,payload)=>{
+                  const out=original();
+                  if(event==='onGroupListUpdate'){
+                    try{const rows=normalizeGroups(payload[1]);if(rows)groupCallbacks.update?.(account,rows);}catch(_){diagnose('group_observer_error');}
+                  }
+                  return out;
+                }));
+                if(typeof cb.onGroupListUpdate==='function')diagnose('callback_hooked:onGroupListUpdate');
+              }
+              const out=Reflect.apply(fn,result,[listeners.get(cb)||cb,...params.slice(1).map(unwrap)]);
+              if(method==='addKernelGroupListener'&&typeof cb.onGroupListUpdate==='function'&&typeof result.getGroupList==='function'){
+                try{groupCallbacks.ready?.(()=>account,()=>Reflect.apply(result.getGroupList,result,[true]));}catch(_){diagnose('group_ready_error');}
+              }
+              return out;
+            }
+            return invoke();
+          });
+          services.set(result,service);diagnose('group_service_hooked');
+        }
+        return services.get(result);
+      }
       return result;
     });
     sessions.set(real,proxy);diagnose('session_facade_created');return proxy;
@@ -158,4 +196,4 @@ function observerExports(native, notify, diagnose=()=>{}) {
   diagnose('native_exports_facade');
   return Object.create(Object.getPrototypeOf(native),descriptors);
 }
-module.exports={normalizeMessage,installObserver,observerExports,numeric};
+module.exports={normalizeMessage,normalizeGroups,installObserver,observerExports,numeric};

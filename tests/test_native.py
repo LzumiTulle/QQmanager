@@ -45,6 +45,18 @@ class NativeTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.n.select_groups(groups)
         with self.assertRaises(ValueError):self.n.select_groups(['999999'],{'123456':'wrong group'})
         self.assertEqual(self.s.setting('bridge_groups'),['123456'])
+    def test_full_group_catalog_is_local_account_scoped_and_does_not_select_groups(self):
+        catalog={'account':'777777','revision':1,'groups':[{'group_id':'999999','group_name':'可选群','secret':'not retained'}]}
+        self.n.heartbeat({'account':'777777','group_catalog':catalog})
+        self.assertEqual(self.s.setting('bridge_groups'),['123456'])
+        self.assertFalse(next(g for g in self.n.group_catalog() if g['group_id']=='999999')['selected'])
+        self.assertNotIn('secret',json.dumps(self.s.setting('native_group_catalog')))
+        self.assertEqual(self.n.snapshot()['groups_count'],1)
+        self.assertEqual(self.n.events({'events':[self.event(group_id='999999') ]})['messages'],0)
+        self.n.refresh_groups();self.assertEqual(self.n.heartbeat({'account':'777777'})['group_refresh'],1)
+        with self.assertRaises(ValueError):self.n.heartbeat({'account':'888888','group_catalog':catalog})
+        self.s.set_setting('ws_account','888888');self.s.set_setting('bridge_groups',[])
+        self.assertEqual(self.n.group_catalog(),[]);self.assertEqual(self.n.snapshot()['groups_count'],0)
     def test_pause_refuses_delivery_and_heartbeat_only_reveals_safe_diagnostics(self):
         self.s.set_setting('native_enabled',False)
         with self.assertRaises(ValueError):self.n.events({'events':[self.event()]})

@@ -177,17 +177,19 @@ def make_server(store, port=8765, connector=None):
                     store.set_setting('native_enabled', bool(body.get('enabled')))
                 elif self.path == '/api/native/groups':
                     result = native.select_groups(body.get('groups'), body.get('names'))
+                elif self.path == '/api/native/groups/refresh':
+                    result = native.refresh_groups()
                 elif self.path == '/api/native/pair':
                     account = str(body.get('account') or store.setting('ws_account'))
                     groups = body.get('groups', store.setting('bridge_groups'))
                     if not account.isdigit() or not 5 <= len(account) <= 20:
                         raise ValueError('请先指定要绑定的QQ账号')
-                    if not isinstance(groups,list) or not groups or any(not str(g).isdigit() or not 5 <= len(str(g)) <= 20 for g in groups):
-                        raise ValueError('请先指定要收集的群号')
+                    if not isinstance(groups,list) or len(groups)>1000 or any(not str(g).isascii() or not str(g).isdigit() or not 5 <= len(str(g)) <= 20 for g in groups):
+                        raise ValueError('群号应为 5–20 位数字')
                     with store.lock, store.db:
                         store.set_setting('ws_account', account)
                         store.set_setting('bridge_groups', list(dict.fromkeys(str(g) for g in groups)))
-                        store.set_setting('bridge_enabled', True)
+                        store.set_setting('bridge_enabled', bool(groups))
                         store.set_setting('native_enabled', True)
                     result = {'url':f'http://127.0.0.1:{self.server.server_port}/', 'token':store.setting('native_token'),
                               'account':account, 'groups':store.setting('bridge_groups')}
