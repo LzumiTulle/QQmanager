@@ -5,7 +5,9 @@ assert os.name=='nt','This installer smoke test requires Windows'
 ROOT=Path(__file__).resolve().parents[2]
 installers=list((ROOT/'release').glob('*.exe'));assert len(installers)==1,installers
 subprocess.run([str(installers[0]),'/S'],check=True,timeout=120)
-exe=Path(os.environ['LOCALAPPDATA'])/'Programs/QQmanager/QQmanager.exe'
+package=json.loads((ROOT/'package.json').read_text(encoding='utf-8'))
+# electron-builder uses the package name for per-user one-click installs.
+exe=Path(os.environ['LOCALAPPDATA'])/'Programs'/package['name']/(package['build']['productName']+'.exe')
 assert exe.is_file(),f'Installed application missing: {exe}'
 p=subprocess.Popen([str(exe),'--background'])
 try:
