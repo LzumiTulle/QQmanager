@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .analysis import analyze, timestamp
+from .quality import noise_reason, merge_notices
 from .importers import MAX_FILE, WATCH_EXT, extract_file, normalize, parse_chat, segments
 
 
@@ -97,13 +98,19 @@ class Store:
     def reanalyze(self):
         with self.lock, self.db:
             for row in self.db.execute('SELECT * FROM messages').fetchall():
+                filtered=noise_reason(row['content'])
+                if filtered:
+                    self.db.execute('UPDATE insights SET quality_reason=? WHERE message_id=?',(filtered,row['id']))
+                    continue
                 if self.db.execute("SELECT 1 FROM analysis_jobs WHERE message_id=? AND state='done'", (row['id'],)).fetchone():
                     continue
                 item = analyze(row['content'], row['sent_at'], self.setting('interests'))
+                if not item:
+                    self.db.execute("UPDATE insights SET quality_reason='不符合重要性门槛' WHERE message_id=? AND engine='rule' AND status='new' AND id NOT IN (SELECT insight_id FROM tasks WHERE insight_id IS NOT NULL)",(row['id'],))
                 if item:
                     self.db.execute('''INSERT INTO insights(message_id,kind,title,score,reason,due,date_note) VALUES (?,?,?,?,?,?,?)
                         ON CONFLICT(message_id,item_key) DO UPDATE SET kind=excluded.kind, title=excluded.title,
-                        score=excluded.score, reason=excluded.reason, due=excluded.due, date_note=excluded.date_note''',
+                        score=excluded.score, reason=excluded.reason, due=excluded.due, date_note=excluded.date_note, quality_reason='' ''',
                         (row['id'], item['kind'], item['title'], item['score'], item['reason'], item['due'], item['date_note']))
 
     def import_data(self, name, data, group, mode, source=None):
@@ -139,13 +146,13 @@ class Store:
 
     def search(self, table, query='', group=''):
         if table == 'insights':
-            sql = 'SELECT i.*, m.group_name,m.sender,m.sent_at,m.content,m.source FROM insights i JOIN messages m ON m.id=i.message_id WHERE 1=1'
+            sql = "SELECT i.*, m.group_name,m.sender,m.sent_at,m.content,m.source,j.group_id live_group,j.account live_account FROM insights i JOIN messages m ON m.id=i.message_id LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE i.quality_reason=''"
             fields, order = ['i.title', 'm.content', 'm.sender'], 'i.score DESC, i.id DESC'
         elif table == 'files':
             sql = 'SELECT id,name,group_name,size,parse_status,source,created,substr(body,1,350) excerpt FROM files WHERE 1=1'
             fields, order = ['name', 'body'], 'id DESC'
         elif table == 'messages':
-            sql = 'SELECT m.*,j.state analysis_state,j.error analysis_error FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE 1=1'
+            sql = 'SELECT m.*,j.state analysis_state,j.error analysis_error,j.filter_reason analysis_reason FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE 1=1'
             fields, order = ['m.content', 'm.sender'], 'm.id DESC'
         else:
             raise ValueError('未知搜索类型')
@@ -158,7 +165,14 @@ class Store:
             escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
             args.extend(['%' + escaped + '%'] * len(fields))
         # Bounded UI response; raw records remain in SQLite.
-        return self.query(sql + ' ORDER BY ' + order + ' LIMIT 500', args)
+        rows=self.query(sql + ' ORDER BY ' + order + ' LIMIT 500', args)
+        return merge_notices(rows) if table=='insights' else rows
+
+    def update_insight(self, insight_id, status):
+        with self.lock,self.db:
+            ids=next((r['merged_ids'] for r in self.search('insights') if insight_id in r['merged_ids']),[insight_id])
+            self.db.executemany('UPDATE insights SET status=? WHERE id=?',[(status,i) for i in ids])
+
 
     def create_task(self, body):
         title = str(body.get('title', '')).strip()[:300]
@@ -303,6 +317,7 @@ class Store:
         from .llm import status
         with self.lock:
             counts = {t: self.db.execute('SELECT count(*) FROM ' + t).fetchone()[0] for t in ('messages', 'files', 'insights')}
+            counts['insights'] = len(self.search('insights'))
             counts['tasks'] = self.db.execute("SELECT count(*) FROM tasks WHERE status='open'").fetchone()[0]
             return {'llm': status(self), 'counts': counts, 'insights': self.search('insights', query, group), 'files': self.search('files', query, group),
                     'messages': self.search('messages', query, group),

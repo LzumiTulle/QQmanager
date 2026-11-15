@@ -32,8 +32,9 @@ class ExtractionTests(unittest.TestCase):
 
     def test_rules_and_interests(self):
         self.assertIsNone(analyze('大家中午好'))
-        self.assertEqual(analyze('会议延期到明天')['kind'], '变更')
-        self.assertIn('Python', analyze('今天学 Python', interests='摄影,Python')['reason'])
+        self.assertEqual(analyze('会议延期到明天')['kind'], '通知')
+        self.assertIsNone(analyze('今天学 Python', interests='摄影,Python'))
+        self.assertIn('Python', analyze('分享 Python 入门教程，包含基础练习', interests='摄影,Python')['reason'])
 
     def test_qq_multiline_and_both_header_orders(self):
         raw = '消息对象：学习群\n2026-11-14 09:00:00 张三(123)\n通知：提交作业\n附件见下文\n李四 2026/11/14 10:00:00\n收到'
@@ -158,14 +159,16 @@ class StoreTests(unittest.TestCase):
         self.assertTrue(f['parse_status'].startswith('待获取'))
         self.assertEqual(f['excerpt'],'')
 
-    def test_interests_reanalyze_keeps_task(self):
+    def test_interests_do_not_promote_chatter_and_reanalysis_keeps_task(self):
         self.store.import_data('a.txt','Python 真有趣'.encode(),'群','chat')
-        self.assertEqual(self.store.snapshot()['counts']['insights'],0)
         self.store.set_setting('interests','Python');self.store.reanalyze()
+        self.assertEqual(self.store.snapshot()['counts']['insights'],0)
+        self.store.import_data('b.txt','请于明天18:00提交 Python 作业'.encode(),'群','chat')
         insight=self.store.snapshot()['insights'][0]
         self.store.create_task({'title':insight['title'],'insight_id':insight['id']})
         self.store.reanalyze()
         self.assertEqual(self.store.snapshot()['counts']['tasks'],1)
+
 
 
 class HTTPTests(unittest.TestCase):

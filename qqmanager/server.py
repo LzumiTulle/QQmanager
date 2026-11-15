@@ -203,7 +203,7 @@ def make_server(store, port=8765, connector=None):
                     if body.get('status') not in ('new', 'read', 'saved', 'dismissed'):
                         raise ValueError('无效状态')
                     with store.lock, store.db:
-                        store.db.execute('UPDATE insights SET status=? WHERE id=?', (body['status'], int(body['id'])))
+                        store.update_insight(int(body['id']),body['status'])
                 elif self.path == '/api/settings':
                     if 'bridge_groups' in body:
                         groups = body['bridge_groups']
@@ -216,6 +216,9 @@ def make_server(store, port=8765, connector=None):
                     if 'interests' in body:
                         store.set_setting('interests', str(body['interests'])[:1000])
                         store.reanalyze()
+                elif self.path == '/api/llm/review':
+                    from .llm import queue_review
+                    result=queue_review(store)
                 elif self.path == '/api/llm/config':
                     save_config(store, body)
                 elif self.path == '/api/llm/test':

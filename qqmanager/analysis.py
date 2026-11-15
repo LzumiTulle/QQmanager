@@ -67,27 +67,35 @@ def due_date(text, sent_at):
         return None, '日期格式有歧义，需手动确认'
 
 
-RULES = [
-    ('变更', r'延期|改期|取消|更正|改为|调整为|推迟|作废', 95, '包含时间或安排变更'),
-    ('待办', r'提交|截止|作业|报名|填写|请.{0,8}(?:完成|确认|反馈)|交材料|交付', 85, '包含待处理动作或截止要求'),
-    ('通知', r'通知|公告|开会|会议|务必|提醒|发布', 75, '包含通知或安排'),
-    ('活动', r'活动|聚会|比赛|招聘|招募|面试|优惠', 65, '包含活动或机会'),
-    ('资料', r'https?://|资料|课件|教程|文档|附件|分享|下载|\.pdf|\.docx|\.zip', 60, '包含资料或链接'),
-    ('问答', r'解决方法|解决了|结论|总结|建议|如何|怎么|请问|求助', 50, '包含问题、解答或讨论结论'),
-]
-
-
 def analyze(text, sent_at=None, interests=''):
-    matches = [(kind, score, reason) for kind, pattern, score, reason in RULES if re.search(pattern, text, re.I)]
-    terms = [x.strip() for x in re.split(r'[,，\n]', interests) if x.strip()]
-    hits = [x for x in terms if x.casefold() in text.casefold()]
-    if not matches and not hits:
+    from .quality import noise_reason, readable
+    if noise_reason(text):
         return None
-    kind, score, reason = matches[0] if matches else ('关注', 60, '匹配个人关注')
+    body = readable(text)
+    if re.search(r'^(?:请问|怎么|如何|有没有|谁知道)|[？?]$',body) and not re.search(r'解决方法|解决步骤|解答|答[：:]',body):
+        return None
+    # A keyword alone is not evidence of a useful announcement.
+    action = re.search(r'(?:提交|填写|交付|交材料|报送|缴费|上传|确认|反馈|完成).{1,60}', body)
+    directive = re.search(r'请|务必|必须|需要|应于|截止|截至|前|记得|^(?:提交|填写|报送|交付)|^(?:通知|公告)[：:]', body)
+    personal_report = re.search(r'^(?:我|本人|已经|刚刚|已提交|已填写)|(?:提交|填写|报送|交付).{0,20}(?:了|完了|好了)[。！!]*$', body)
+    schedule = re.search(r'会议|开会|停课|停电|停水|维护|考试|培训|集合|比赛|赛事|公开赛|决赛|联赛|[A-Za-z]赛|报名|课程|讲座|分享会', body)
+    timing = re.search(r'今天|今日|明天|后天|周[一二三四五六日天]|\d{1,2}[:：点时月日]|延期|改期|取消|推迟|调整', body)
+    resource = re.search(r'资料|课件|教程|文档|附件|指南|模板|学习路线|解决方法|解决步骤|解决方案', body)
+    concrete = re.search(r'https?://|分享|下载|附件|\.(?:pdf|docx|zip|md)|包含|使用|选择|执行|步骤|先.{1,20}再', body, re.I)
+    if action and directive and not personal_report:
+        kind,score,reason='待办',85,'包含明确的处理动作与对象'
+    elif (schedule and timing) or (re.search(r'^(?:通知|公告)[：:]',body) and len(body)>=10 and schedule):
+        kind,score,reason='通知',75,'包含具体安排、时间或安排变更'
+    elif resource and concrete and len(body)>=12:
+        kind,score,reason='资料',60,'包含可使用的资料或具体解决步骤'
+    else:
+        return None
+    terms = [x.strip() for x in re.split(r'[,，\n]', interests) if x.strip()]
+    hits = [x for x in terms if x.casefold() in body.casefold()]
     if hits:
         reason += '；关注词：' + '、'.join(hits)
         score = min(score + 10, 100)
-    due, note = due_date(text, sent_at) if kind in ('待办', '活动', '通知', '变更') else (None, '')
-    if kind == '变更':
-        note = '变更需核对已有待办；不会自动覆盖提醒。' + note
-    return {'kind': kind, 'score': score, 'reason': reason, 'title': re.sub(r'\s+', ' ', text).strip()[:110], 'due': due, 'date_note': note}
+    due,note=due_date(body,sent_at) if kind!='资料' else (None,'')
+    if re.search(r'延期|改期|取消|更正|改为|调整|推迟|作废',body):
+        note='安排变更，请核对已有待办；不会自动修改提醒。'+note
+    return {'kind':kind,'score':score,'reason':reason,'title':re.sub(r'\s+',' ',body).strip()[:110],'due':due,'date_note':note}
