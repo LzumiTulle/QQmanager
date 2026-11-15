@@ -2,7 +2,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const http=require('node:http');
-const {normalizeMessage,observerExports}=require('./core.cjs');
+const {normalizeMessage,observerExports,mergeGroups}=require('./core.cjs');
 let active=false;
 function start(configPath) {
   if(active)return;active=true;
@@ -11,7 +11,7 @@ function start(configPath) {
   if(url.protocol!=='http:' || url.hostname!=='127.0.0.1' || url.pathname!=='/' || url.username || url.password || url.search || url.hash)throw Error('Local endpoint required');
   if(typeof config.token!=='string'||config.token.length<32)throw Error('Local pairing required');
   const directory=path.dirname(configPath),outboxPath=path.join(directory,'outbox.json');
-  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.3',events:0,selected:0,dropped:0,signals:{}};
+  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.4',events:0,selected:0,dropped:0,signals:{}};
   const allowed=new Set(config.groups||[]);let account=String(config.account||''),enabled=false,queue=[],busy=false,lastError='',lastConfig=0,identity='';
   const seen=new Set();
   let groupReader=null,groupIdentity=null,groupCatalog=null,groupRevision=0,lastGroupRequest=0,groupRefreshSeen=-1;
@@ -19,7 +19,9 @@ function start(configPath) {
     ready(getAccount,read){groupIdentity=getAccount;groupReader=read;},
     update(current,groups){
       if(current!==account)return;
-      identity=current;groupCatalog={account:current,groups,revision:++groupRevision};signal('group_list_received');
+      identity=current;
+      const previous=groupCatalog?.account===current?groupCatalog.groups:[];
+      groupCatalog={account:current,groups:mergeGroups(previous,groups),revision:++groupRevision};signal('group_list_received');
     }
   };
   try {const old=JSON.parse(fs.readFileSync(outboxPath,'utf8'));if(Array.isArray(old))queue=old.slice(-2000);}catch(_){}
@@ -75,6 +77,7 @@ function start(configPath) {
         if(groupReader&&groupIdentity?.()===account&&Date.now()-lastGroupRequest>10000&&
            (!groupCatalog||groupRefreshSeen!==result.group_refresh)){
           lastGroupRequest=Date.now();groupRefreshSeen=result.group_refresh;
+          groupCatalog=null; // A requested full refresh starts a new batch collection.
           // Only the read-only list API. Never send messages, join or leave groups.
           try{Promise.resolve(groupReader()).catch(()=>signal('group_list_request_failed'));}catch(_){signal('group_list_request_failed');}
         }

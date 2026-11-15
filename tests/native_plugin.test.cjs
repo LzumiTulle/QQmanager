@@ -117,3 +117,11 @@ test('group list observer preserves QQ callbacks and exposes only a read-only re
  const failure=Error('QQ callback');groupService.addKernelGroupListener({onGroupListUpdate(){throw failure;}});
  assert.throws(()=>registered.onGroupListUpdate(0,rows),e=>e===failure);assert.equal(updates.length,1);
 });
+test('partial group callbacks retain earlier batches and update names without duplicates',()=>{
+ const {mergeGroups}=require('../plugins/qqmanager-native/core.cjs');
+ const first=[{group_id:'123456',group_name:'设计群'},{group_id:'654321',group_name:'技术群'}];
+ const second=mergeGroups(first,[{group_id:'654321',group_name:'技术资料群'}]);
+ assert.deepEqual(second,[first[0],{group_id:'654321',group_name:'技术资料群'}]);
+ assert.deepEqual(mergeGroups(second,[]),second);
+ assert.deepEqual(mergeGroups([],second.slice(1)),second.slice(1));
+});

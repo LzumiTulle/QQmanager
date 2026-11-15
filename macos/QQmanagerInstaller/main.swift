@@ -30,7 +30,7 @@ final class Installer: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle:"退出 QQmanager 安装助手",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
         appItem.submenu=appMenu;menu.addItem(appItem);NSApp.mainMenu=menu
         window=NSWindow(contentRect:NSRect(x:0,y:0,width:660,height:490),styleMask:[.titled,.closable,.miniaturizable],backing:.buffered,defer:false)
-        window.title="QQmanager 插件安装助手 · 0.1.3 实验版";window.center();window.isReleasedWhenClosed=false
+        window.title="QQmanager 插件安装助手 · 0.1.4 实验版";window.center();window.isReleasedWhenClosed=false
         let root=NSStackView();root.orientation = .vertical;root.alignment = .leading;root.spacing=18;root.edgeInsets=NSEdgeInsets(top:26,left:26,bottom:24,right:26)
         root.translatesAutoresizingMaskIntoConstraints=false;window.contentView!.addSubview(root)
         NSLayoutConstraint.activate([root.topAnchor.constraint(equalTo:window.contentView!.topAnchor),root.bottomAnchor.constraint(equalTo:window.contentView!.bottomAnchor),root.leadingAnchor.constraint(equalTo:window.contentView!.leadingAnchor),root.trailingAnchor.constraint(equalTo:window.contentView!.trailingAnchor)])
@@ -135,7 +135,7 @@ final class Installer: NSObject, NSApplicationDelegate {
                 }
                 try writePrivate(json(config),profile.appendingPathComponent("config.json"))
                 if updating {
-                    log("插件已更新至 0.1.3。请正常打开 QQ。\n\n本次仅更新 QQmanager-native 中的扩展文件和本机配对配置；原始 QQ 入口备份保持不变。\n请在 QQmanager“自动接入”验证账号匹配、消息监听和真实消息入库。")
+                    log("插件已更新至 0.1.4。请正常打开 QQ。\n\n本次仅更新 QQmanager-native 中的扩展文件和本机配对配置；原始 QQ 入口备份保持不变。\n请在 QQmanager“自动接入”验证账号匹配、消息监听和真实消息入库。")
                     return
                 }
                 let loader="""

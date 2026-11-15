@@ -94,6 +94,11 @@ function normalizeGroups(rows) {
   }
   return rows.length&&!groups.size?null:[...groups.values()];
 }
+function mergeGroups(previous, incoming) {
+  const groups=new Map(previous.map(g=>[g.group_id,g]));
+  for(const group of incoming)groups.set(group.group_id,group);
+  return [...groups.values()].slice(0,1000);
+}
 function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}) {
   if(!native?.NodeIQQNTWrapperSession)return native;
   const originals=new WeakMap(),sessions=new WeakMap(),services=new WeakMap();
@@ -196,4 +201,4 @@ function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}) {
   diagnose('native_exports_facade');
   return Object.create(Object.getPrototypeOf(native),descriptors);
 }
-module.exports={normalizeMessage,normalizeGroups,installObserver,observerExports,numeric};
+module.exports={normalizeMessage,normalizeGroups,mergeGroups,installObserver,observerExports,numeric};

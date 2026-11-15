@@ -4,7 +4,7 @@
   "name": "QQmanager 消息收集",
   "slug": "qqmanager_native",
   "description": "在正常 QQ 客户端内收集指定群消息到本机 QQmanager；不创建第二份 QQ 登录。实验版，需验证客户端版本。",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "authors": [{"name":"QQmanager"}],
   "platform": ["darwin", "win32"],
   "injects": {"main":"./main.cjs"}

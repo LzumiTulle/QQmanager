@@ -8,7 +8,7 @@ QQmanager 扩展运行在用户正常使用的 QQ 中，观察已经存在的消
 - 其他 Mac QQ 版本：未验证，更新 QQ 后需要重新核对。
 - Windows：共享插件代码与 manifest，尚未完成 Windows QQ 实机验证。需要用户已有的兼容 LiteLoaderQQNT 环境；桌面安装器不会自动安装 QQ 补丁或加载器。
 
-插件 0.1.3 通过独立的 JavaScript 转发对象处理只读原生接口，不修改原生二进制。相关设计依据见 [上游只读导出适配记录](https://github.com/NapNeko/NapCatQQ/commit/e8fbda4be614cd5a9deacb9c563b2447b04cd3b8)。QQmanager 不加载 NapCat 登录流程。
+插件 0.1.4 通过独立的 JavaScript 转发对象处理只读原生接口，不修改原生二进制。相关设计依据见 [上游只读导出适配记录](https://github.com/NapNeko/NapCatQQ/commit/e8fbda4be614cd5a9deacb9c563b2447b04cd3b8)。QQmanager 不加载 NapCat 登录流程。
 
 ## Mac 安装与恢复
 
@@ -21,7 +21,7 @@ QQmanager 扩展运行在用户正常使用的 QQ 中，观察已经存在的消
 
 发生异常时，退出 QQ，使用同一助手“恢复原版 QQ”。助手的原始入口备份位于 `~/Library/Application Support/QQmanagerInstaller/`。恢复会检查哈希，不覆盖 QQ 后续升级造成的变化；原文和模型设置保留。
 
-原生助手 0.1.3 使用附着于主窗口的异步选择框。取消返回主界面；⌘Q 退出，重新打开可继续操作。命令行开发工具 `scripts/native/install_mac.py` 的备份与 GUI 助手独立，请用对应工具恢复。
+原生助手 0.1.4 使用附着于主窗口的异步选择框。取消返回主界面；⌘Q 退出，重新打开可继续操作。命令行开发工具 `scripts/native/install_mac.py` 的备份与 GUI 助手独立，请用对应工具恢复。
 
 ## Windows 接入
 
@@ -53,4 +53,4 @@ python scripts/native/pair_windows.py --plugin-data "C:\YourLoader\data\qqmanage
 
 ## 群列表选择
 
-0.1.3 在保留 QQ 原有调用和监听器的前提下，观察 `onGroupListUpdate`，并允许用户通过本机服务请求只读 `getGroupList(true)` 刷新。只同步群号与群名称，不复制成员列表、未选群聊天或附件。接口依据：[上游群列表实现](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-core/apis/group.ts)。元数据按绑定账号隔离，只保存在本机；仍需用户明确勾选群才开始收集。最多同步 1,000 个群。
+0.1.4 在保留 QQ 原有调用和监听器的前提下，观察 `onGroupListUpdate`，并允许用户通过本机服务请求只读 `getGroupList(true)` 刷新。只同步群号与群名称，不复制成员列表、未选群聊天或附件。接口依据：[上游群列表实现](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-core/apis/group.ts)。元数据按绑定账号隔离，只保存在本机；仍需用户明确勾选群才开始收集。最多同步 1,000 个群。
