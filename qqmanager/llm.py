@@ -2,6 +2,8 @@
 import hashlib
 import json
 import sqlite3
+import ssl
+import certifi
 import time
 import urllib.error
 import urllib.request
@@ -134,7 +136,11 @@ def request_model(config, messages, target_id, interests=''):
         headers['Authorization'] = 'Bearer ' + config['key']
     req = urllib.request.Request(config['url'] + '/chat/completions', json.dumps(payload).encode(), headers)
     try:
-        with urllib.request.build_opener(NoRedirect()).open(req, timeout=45) as response:
+        tls = ssl.create_default_context()
+        # Frozen apps cannot rely on a developer machine's OpenSSL CA path.
+        # Keep OS trust and add the bundled Mozilla roots; verification stays on.
+        tls.load_verify_locations(cafile=certifi.where())
+        with urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=tls)).open(req, timeout=45) as response:
             raw = response.read(512001)
         if len(raw) > 512000:
             raise ModelError('模型响应过大；已保留原文和规则结果')
