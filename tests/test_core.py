@@ -203,6 +203,17 @@ class HTTPTests(unittest.TestCase):
         self.assertTrue(bridge_authorized({'X-Signature':sign},raw,token))
         self.assertFalse(bridge_authorized({'X-Signature':sign},raw+b' ',token))
 
+    def test_native_groups_can_be_saved_and_cleared_without_exposing_pairing_token(self):
+        self.store.set_setting('ws_account','777777')
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.request('/api/native/groups',{'groups':['123456']})
+        self.assertEqual(cm.exception.code,403)
+        headers={'X-CSRF-Token':self.csrf}
+        result=json.load(self.request('/api/native/groups',{'groups':['123456'],'names':{'123456':'验证群'}},headers))
+        self.assertTrue(result['collecting']);self.assertNotIn('token',result)
+        result=json.load(self.request('/api/native/groups',{'groups':[]},headers))
+        self.assertFalse(result['collecting']);self.assertEqual(self.store.setting('bridge_groups'),[])
+
     def test_file_download_preserves_bytes(self):
         self.store.import_data('资料.txt','数据分析资料'.encode(),'群','file')
         f=self.store.snapshot()['files'][0]

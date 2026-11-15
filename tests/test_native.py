@@ -24,6 +24,27 @@ class NativeTests(unittest.TestCase):
     def test_private_messages_and_remote_commands_rejected(self):
         for event in [self.event(message_type='private'),{'action':'send_msg'},self.event(message=[{'type':'image','data':{'url':'https://example.com'}}])]:
             with self.assertRaises(ValueError):self.n.events({'events':[event]})
+    def test_group_selection_add_remove_clear_and_history_retention(self):
+        self.n.events({'events':[self.event(group_name='设计讨论群')]})
+        self.n.select_groups(['999999','123456','999999'],{'999999':'测试用群'})
+        self.assertEqual(self.s.setting('bridge_groups'),['999999','123456'])
+        self.assertEqual(len(self.n.group_catalog()),2)
+        self.n.select_groups(['999999'])
+        self.assertEqual(self.n.events({'events':[self.event(message_id='100') ]})['messages'],0)
+        self.assertEqual(self.s.snapshot()['counts']['messages'],1)
+        self.assertFalse(next(g for g in self.n.group_catalog() if g['group_id']=='123456')['selected'])
+        self.n.select_groups([])
+        self.assertFalse(self.n.heartbeat({'account':'777777'})['enabled'])
+        self.assertFalse(self.n.snapshot()['enabled'])
+        self.n.select_groups(['123456'])
+        self.assertTrue(self.n.heartbeat({'account':'777777'})['enabled'])
+        self.s.set_setting('ws_account','888888');self.s.set_setting('bridge_groups',[])
+        self.assertEqual(self.n.group_catalog(),[])
+    def test_invalid_group_selection_does_not_change_configuration(self):
+        for groups in [None,'123456',['123'],['abcde'],['１２３４５'],[123456]]:
+            with self.assertRaises(ValueError):self.n.select_groups(groups)
+        with self.assertRaises(ValueError):self.n.select_groups(['999999'],{'123456':'wrong group'})
+        self.assertEqual(self.s.setting('bridge_groups'),['123456'])
     def test_pause_refuses_delivery_and_heartbeat_only_reveals_safe_diagnostics(self):
         self.s.set_setting('native_enabled',False)
         with self.assertRaises(ValueError):self.n.events({'events':[self.event()]})

@@ -11,6 +11,45 @@ class NativeBridge:
         self.received = self.saved = 0
         self.last_event = None
 
+    def group_catalog(self):
+        s = self.store
+        account = s.setting('ws_account')
+        names = (s.setting('native_group_names') or {}).get(account, {})
+        catalog = dict(names)
+        for row in s.query('''SELECT j.group_id,m.group_name FROM analysis_jobs j
+                JOIN messages m ON m.id=j.message_id WHERE j.account=? ORDER BY m.id''', (account,)):
+            if row['group_name'] != row['group_id']:
+                catalog[row['group_id']] = row['group_name']
+        selected = s.setting('bridge_groups')
+        for group in selected:
+            catalog.setdefault(group, '')
+        return [{'group_id': group, 'group_name': name or '群 ' + group, 'selected': group in selected}
+                for group,name in sorted(catalog.items(), key=lambda x: (x[0] not in selected, x[1], x[0]))]
+
+    def select_groups(self, groups, names=None):
+        s = self.store
+        account = s.setting('ws_account')
+        if not account:
+            raise ValueError('请先绑定日常使用的 QQ 账号')
+        if (not isinstance(groups, list) or len(groups)>1000 or
+                any(not isinstance(g,str) or not g.isascii() or not g.isdigit() or not 5<=len(g)<=20 for g in groups)):
+            raise ValueError('群号应为 5–20 位数字')
+        names = names or {}
+        if not isinstance(names,dict) or any(g not in groups or not isinstance(n,str) or len(n)>100 for g,n in names.items()):
+            raise ValueError('群名称无效')
+        with s.lock,s.db:
+            catalog = s.setting('native_group_names') or {}
+            known = catalog.setdefault(account,{})
+            for group in s.setting('bridge_groups'):
+                known.setdefault(group,'')
+            for group in groups:
+                known[group] = names.get(group,known.get(group,''))
+            s.set_setting('native_group_names',catalog)
+            s.set_setting('bridge_groups',list(dict.fromkeys(groups)))
+            s.set_setting('bridge_enabled',bool(groups))
+            s.set_setting('native_enabled',True)
+        return {'groups':s.setting('bridge_groups'),'collecting':bool(groups)}
+
     def heartbeat(self, body):
         s = self.store
         # Allowlisted diagnostics; never persist arbitrary plugin data or credentials.
@@ -65,7 +104,8 @@ class NativeBridge:
     def snapshot(self):
         with self.lock:
             report=dict(self.report)
-            report.update(enabled=bool(self.store.setting('native_enabled')),saved=self.saved,
+            report.update(enabled=bool(self.store.setting('native_enabled') and self.store.setting('bridge_enabled')),saved=self.saved,
                           received=self.received,last_event=self.last_event,
+                          groups=self.group_catalog(),
                           connected=bool(report.get('last_seen') and time.time()-report['last_seen']<35))
             return report

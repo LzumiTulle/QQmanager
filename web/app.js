@@ -102,11 +102,30 @@ function connectionsView(){const s=state.settings;const tabs=`<div class="tabs p
  return tabs+`<p class="help">供已有外部适配端的用户配置；使用客户端插件时无需设置。</p><details class="panel"><summary>NapCat 连接</summary>${napcatPanel()}</details><details class="panel"><summary>OneBot HTTP 上报</summary><section class="panel"><div class="section-title"><h2>QQ 消息自动接入</h2><span class="badge amber">需外部适配端</span></div><div class="status-line"><span class="dot"></span>${s.bridge_enabled?'接收端已启用':'接收端未启用'} · ${s.last_event?'最近收到消息 '+fmt(s.last_event):'尚未收到群消息'}</div><p>支持 OneBot v11 HTTP 上报，例如已有的 NapCat 适配端。配置后只接收指定群的新消息，无需逐次导入。</p><div class="connection-steps"><div class="step"><div><strong>准备并登录外部 QQ 适配端</strong><p>本软件不包含 QQ 登录组件；第三方适配端的稳定性和账号限制需自行评估。</p></div></div><div class="step"><div><strong>配置 HTTP Webhook 上报</strong><p>使用下方接收地址与凭据，消息格式选择 Array。仅连接本机适配端。</p></div></div><div class="step"><div><strong>填入要接入的群号</strong><p>只保存这些群的新消息。历史聊天不会自动补齐；群文件事件只登记文件名，正文需实际导入。</p></div></div></div><form id="bridge-form" class="form-grid"><label>接入群号（英文逗号分隔）<input name="groups" value="${esc(s.bridge_groups.join(','))}" placeholder="123456789,987654321"></label><label class="checkbox-label"><input type="checkbox" name="enabled" ${s.bridge_enabled?'checked':''}>启用自动接入</label><button class="primary" type="submit">保存接入配置</button></form><div class="inline-actions"><button data-action="bridge-details">显示接收地址与凭据</button></div><div id="bridge-details"></div><p class="help">QQ 官方机器人接入另有权限要求，第一版尚未实现官方 SDK 连接。此处是独立接收适配器，不是 QQ 官方客户端插件。</p></section></details>`;
 }
 
+let nativeDraft=null;
+function ensureNativeDraft(){
+  const account=connectorState?.selected_account||'';
+  if(!nativeDraft||nativeDraft.account!==account||!nativeDraft.dirty){
+    const rows=nativeState?.groups||[];
+    nativeDraft={account,selected:new Set(state.settings.bridge_groups),names:new Map(rows.map(g=>[g.group_id,g.group_name])),dirty:false};
+    state.settings.bridge_groups.forEach(g=>{if(!nativeDraft.names.has(g))nativeDraft.names.set(g,'群 '+g);});
+  }
+  return nativeDraft;
+}
+function nativeGroupRows(){
+  const d=ensureNativeDraft();
+  return [...d.names].sort((a,b)=>Number(d.selected.has(b[0]))-Number(d.selected.has(a[0]))).map(([id,name])=>`<div class="native-group-row"><label><input type="checkbox" data-native-group="${esc(id)}" ${d.selected.has(id)?'checked':''}><span>${esc(name)}<small>${esc(id)}</small></span></label>${d.selected.has(id)?`<button type="button" data-remove-group="${esc(id)}" aria-label="移除 ${esc(name)}">移除</button>`:'<span class="group-unselected">未收集</span>'}</div>`).join('')||'<p class="help">尚未添加群聊，点击“添加群聊”开始。</p>';
+}
+function renderNativeGroups(){
+  $('#native-group-list').innerHTML=nativeGroupRows();
+  $('#native-group-count').textContent=`已选 ${nativeDraft.selected.size} 个群${nativeDraft.dirty?' · 未保存':''}`;
+}
 function nativePanel(){
   const n=nativeState||{}, signals=n.signals||{}, hooked=!!signals['callback_hooked:onRecvMsg'];
+  const d=ensureNativeDraft();
   const incompatible=!hooked&&Object.keys(signals).some(key=>key.startsWith('unwritable:'));
   const phase=!n.enabled?'客户端插件已暂停':!n.connected?'等待 QQ 客户端插件连接':incompatible?'当前 QQ 接口不兼容，消息尚未开始收集':!hooked?'插件已连接，正在验证消息监听':!n.account_matches?'监听已就绪，等待新消息确认绑定账号':'客户端消息监听已连接';
-  return `<section id="native-panel" class="panel"><div class="section-title"><h2>QQ 客户端</h2><span class="badge">实验性插件</span></div><p>使用你正常登录的 QQ，不额外登录容器。只收集指定群，新消息继续进入原文保存和 AI 分析。</p><div class="status-line"><span class="dot"></span>${phase}</div><p>本次已保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 已选 ${state.settings.bridge_groups.length} 个群</p><small>${n.platform?esc(n.platform)+' / '+esc(n.architecture)+' · ':''}最近心跳 ${fmt(n.last_seen)} · 客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}<p class="help">QQ 需保持登录并运行；离线历史不自动补齐。QQ 更新可能影响插件兼容性。</p><details ${state.settings.bridge_groups.length?'':'open'}><summary>账号与接收群（${state.settings.bridge_groups.length} 个）</summary><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(connectorState?.selected_account||'')}" placeholder="用于核对插件登录账号" required></label><label>接收群号（英文逗号分隔）<input name="groups" value="${esc(state.settings.bridge_groups.join(','))}" required></label><button type="submit">保存接收范围</button></form></details><div class="inline-actions"><button data-action="native-toggle">${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
+  return `<section id="native-panel" class="panel"><div class="section-title"><h2>收集群聊</h2><span id="native-group-count" class="badge">已选 ${d.selected.size} 个群${d.dirty?' · 未保存':''}</span></div><div class="status-line"><span class="dot"></span>${phase}</div><p>勾选要收集的群，取消勾选或移除即可停止收集。保存后约 10 秒生效，已有记录保留。</p><div id="native-group-list" class="native-group-list">${nativeGroupRows()}</div><div class="inline-actions"><button type="button" data-action="native-add-group">添加群聊</button><button type="button" data-action="native-clear-groups">取消全选</button><button type="button" class="primary" data-action="native-save-groups">保存群聊选择</button></div><p class="help">显示已配置或收集过的群；新群可按群号添加。当前插件尚不能读取完整 QQ 群列表。</p><details ${d.account?'':'open'}><summary>账号与连接详情</summary><p>使用你正常登录的 QQ，无需重复登录。QQ 需保持运行；离线历史不自动补齐。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(d.account)}" required></label><button type="submit">保存绑定账号</button></form><p>本次保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 最近心跳 ${fmt(n.last_seen)}</p><small>客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}</details><div class="inline-actions"><button data-action="native-toggle" ${state.settings.bridge_groups.length?'':'disabled'}>${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
 }
 function napcatPanel(){
   const c=connectorState;
@@ -119,7 +138,6 @@ async function refreshConnector(force=false){
   try{
     const [c,n]=await Promise.all([api('/api/connector'),api('/api/native')]);
     nativeState=n;
-    if(view==='connections'&&$('#native-panel')&&!document.activeElement.closest?.('#native-panel')&&!$('#native-panel details[open]'))$('#native-panel').outerHTML=nativePanel();
     if(c.status==='online'&&c.collecting&&c.account?.user_id===c.selected_account&&c.selected.length){
       c.message='正在自动收集所选群的新消息';
     }
@@ -127,6 +145,7 @@ async function refreshConnector(force=false){
     const sameAccount=connectorState?.account?.user_id===c.account?.user_id;
     const draft=new Map(sameAccount&&!force?Array.from(document.querySelectorAll('#groups-form input[name=group]'),input=>[input.value,input.checked]):[]);
     connectorState=c;
+    if(view==='connections'&&$('#native-panel')&&!nativeDraft?.dirty&&(force||(!document.activeElement.closest?.('#native-panel')&&!$('#native-panel details[open]'))))$('#native-panel').outerHTML=nativePanel();
     const active=document.activeElement;
     const busy=active.closest?.('#connector-form') || (active.closest?.('#groups-form') && ['INPUT','TEXTAREA','SELECT'].includes(active.tagName));
     if(view==='connections'&&(!busy||force)&&signature!==connectorSignature){
@@ -142,7 +161,7 @@ async function refreshConnector(force=false){
 function settingsView(){
  const tabs=`<div class="tabs page-tabs">${[['model','模型'],['interests','关注词'],['notifications','提醒'],['about','关于']].map(([key,title])=>`<button data-settings-tab="${key}" class="${settingsTab===key?'active':''}" aria-pressed="${settingsTab===key}">${title}</button>`).join('')}</div>`;
  if(settingsTab==='model')return tabs+modelPanel();
- if(settingsTab==='interests')return tabs+`<section class="panel"><h2>关注词</h2><p>命中这些词的消息会进入信息列表。</p><form id="settings-form" class="form-grid"><label>关键词<textarea name="interests" placeholder="用逗号或换行分隔">${esc(state.settings.interests)}</textarea><small>保存后更新本地规则结果；已有 AI 结果和待办保留。</small></label><button class="primary" type="submit">保存关注词</button></form></section>`;
+ if(settingsTab==='interests')return tabs+`<section class="panel"><h2>关注词</h2><p>优先展示与这些词相关的有效通知、待办和资料；闲聊不会仅因命中关键词进入列表。</p><form id="settings-form" class="form-grid"><label>关键词<textarea name="interests" placeholder="用逗号或换行分隔">${esc(state.settings.interests)}</textarea><small>保存后更新本地规则结果；已有 AI 结果和待办保留。</small></label><button class="primary" type="submit">保存关注词</button></form></section>`;
  if(settingsTab==='notifications')return tabs+`<section class="panel"><h2>到期提醒</h2><p>桌面应用运行时会发送到期提醒，关闭窗口后仍在后台运行。请在系统设置中允许 QQmanager 通知。</p><p class="help">提醒时间按北京时间显示。休眠或关机期间无法即时通知。</p><details><summary>浏览器与兼容提醒</summary><div class="form-grid"><button data-action="enable-browser">开启浏览器通知</button><small>浏览器授权状态：${'Notification' in window?esc(Notification.permission):'不支持'}</small><label class="checkbox-label"><input type="checkbox" id="native-notifications" ${state.settings.native_notifications?'checked':''}>兼容旧服务的 macOS 通知</label><small>桌面版已有内置提醒，无需重复开启。</small>${state.settings.notification_error?`<p class="warning">${esc(state.settings.notification_error)}</p>`:''}</div></details></section>`;
  return tabs+`<section class="panel"><h2>QQmanager</h2><p>原文和资料保存在本机。启用模型后，向你配置的服务发送所选群的新消息、有限上下文和关注词。</p><p>分类和摘要仅作辅助；提醒时间需要确认，变更消息不会自动覆盖待办。</p><details><summary>数据与功能边界</summary><p>密钥保存在本机数据库，尚未使用系统凭据保险库。可从应用菜单打开数据目录。图片 OCR、语音转写、语义搜索尚未支持；不自动下载群文件正文。</p></details></section>`;
 }
@@ -202,6 +221,9 @@ async function handleAction(action,id){
     case 'bridge-details':{const b=await api('/api/bridge');$('#bridge-details').innerHTML=`<p class="help">Webhook 地址</p><div class="code-box">${esc(b.url)}</div><p class="help">Token / Secret（不要公开分享）</p><div class="code-box">${esc(b.token)}</div><p class="help">支持 Authorization: Bearer Token 或 OneBot X-Signature（HMAC-SHA1，Secret 使用上述凭据）。</p>`;return;}
     case 'notification-read':await api('/api/notifications/read',{id});await refresh();showNotifications();return;
     case 'enable-browser':if(!('Notification' in window))throw Error('当前浏览器不支持系统通知');{const p=await Notification.requestPermission();if(p==='granted')localStorage.setItem('qqm-browser-notifications','on');toast(p==='granted'?'浏览器通知已启用':'通知未获授权，站内提醒仍会保留');render();return;}
+    case 'native-add-group':openModal('添加群聊',`<form id="native-add-form" class="form-grid"><label>群号<input name="group" inputmode="numeric" pattern="[0-9]{5,20}" required placeholder="在 QQ 群资料里查看群号"></label><label>群名称（可选）<input name="name" maxlength="100" placeholder="便于辨认"></label><p class="help">添加后，点击“保存群聊选择”开始收集新消息。</p><button type="submit" class="primary">添加到列表</button></form>`);return;
+    case 'native-clear-groups':ensureNativeDraft();nativeDraft.selected.clear();nativeDraft.dirty=true;renderNativeGroups();return;
+    case 'native-save-groups':{const d=ensureNativeDraft();await api('/api/native/groups',{groups:[...d.selected],names:Object.fromEntries([...d.names].filter(([g])=>d.selected.has(g)))});nativeDraft=null;await refresh(false);await refreshConnector(true);render();toast(state.settings.bridge_groups.length?'群聊选择已保存，约 10 秒内开始按新范围收集':'已停止收集所有群；原始记录和分析结果仍保留');return;}
     case 'native-toggle':await api('/api/native/settings',{enabled:!nativeState?.enabled});await refreshConnector();return;
     case 'model-pause':await api('/api/llm/pause',{});toast('AI 分析已暂停；新消息继续入库并排队');break;
     case 'model-review':{const result=await api('/api/llm/review',{});toast(`已整理本地规则，${result.queued} 条已选群消息进入重新分析队列；按现有模型调用上限处理`);break;}
@@ -220,6 +242,7 @@ async function importDemo(){
 async function fileBase64(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=()=>reject(Error('文件读取失败'));r.readAsDataURL(file);});}
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button,a');if(!button)return;
+  if(button.dataset.removeGroup){ensureNativeDraft();nativeDraft.selected.delete(button.dataset.removeGroup);nativeDraft.dirty=true;renderNativeGroups();return;}
   if(button.dataset.view){if(button.id==='analysis-status'){settingsTab='model';if(view==='settings')render();}event.preventDefault();setView(button.dataset.view);return;}
   if(button.dataset.themeChoice){applyTheme(button.dataset.themeChoice);return;}
   if(button.dataset.settingsTab){settingsTab=button.dataset.settingsTab;render();return;}
@@ -232,7 +255,12 @@ document.addEventListener('submit',async event=>{
   event.preventDefault();const form=event.target, data=new FormData(form),submit=form.querySelector('[type=submit]');
   if(submit)submit.disabled=true;
   try{
-    if(form.id==='import-form'){
+    if(form.id==='native-add-form'){
+      const group=String(data.get('group')).trim(),name=String(data.get('name')||'').trim();
+      if(!/^[0-9]{5,20}$/.test(group))throw Error('群号应为 5–20 位数字');
+      ensureNativeDraft();nativeDraft.selected.add(group);nativeDraft.names.set(group,name||nativeDraft.names.get(group)||'群 '+group);nativeDraft.dirty=true;
+      modal.close();renderNativeGroups();toast('已添加到列表，请保存群聊选择');
+    }else if(form.id==='import-form'){
       const files=Array.from($('#import-files').files),text=String(data.get('text')||'').trim(),mode=data.get('mode');
       if(!files.length&&!text)throw Error('请选择文件或粘贴聊天内容');
       if(text&&mode!=='chat')throw Error('粘贴内容用于聊天记录，请切换为聊天类型或清空粘贴区');
@@ -257,7 +285,7 @@ document.addEventListener('submit',async event=>{
       await api('/api/connector/groups',{groups:data.getAll('group')});
       toast('群选择已保存；之后只收集所选群的新消息');await refresh();await refreshConnector(true);
     }else if(form.id==='native-groups-form'){
-      await api('/api/native/pair',{account:data.get('account').trim(),groups:data.get('groups').split(/[,，\s]+/).filter(Boolean)});await refresh();await refreshConnector(true);toast('账号与接收范围已保存，可从应用菜单打开插件安装助手');
+      await api('/api/native/pair',{account:data.get('account').trim(),groups:[...ensureNativeDraft().selected]});nativeDraft=null;await refresh();await refreshConnector(true);toast('绑定账号已保存');
     }else if(form.id==='model-form'){
       $('#model-test-result').textContent='正在保存配置并用虚构通知测试，最长约 45 秒…';
       await api('/api/llm/config',{url:data.get('url'),model:data.get('model'),key:data.get('key'),clear_key:!!data.get('clear_key'),daily_limit:Number(data.get('daily_limit'))});
@@ -271,6 +299,7 @@ document.addEventListener('submit',async event=>{
   finally{if(submit)submit.disabled=false;}
 });
 document.addEventListener('change',async event=>{
+if(event.target.dataset.nativeGroup){ensureNativeDraft();const id=event.target.dataset.nativeGroup;if(event.target.checked)nativeDraft.selected.add(id);else nativeDraft.selected.delete(id);nativeDraft.dirty=true;renderNativeGroups();return;}
 if(event.target.id==='kind-filter'){kindFilter=event.target.value;render();return;}
 if(event.target.id==='sort-order'){sortOrder=event.target.value;render();return;}
 if(event.target.id==='model-preset'){

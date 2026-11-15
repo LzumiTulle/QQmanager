@@ -175,6 +175,8 @@ def make_server(store, port=8765, connector=None):
                     result = native.events(body)
                 elif self.path == '/api/native/settings':
                     store.set_setting('native_enabled', bool(body.get('enabled')))
+                elif self.path == '/api/native/groups':
+                    result = native.select_groups(body.get('groups'), body.get('names'))
                 elif self.path == '/api/native/pair':
                     account = str(body.get('account') or store.setting('ws_account'))
                     groups = body.get('groups', store.setting('bridge_groups'))
