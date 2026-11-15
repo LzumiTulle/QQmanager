@@ -19,7 +19,15 @@ try:
  else:raise AssertionError('Installed desktop did not start the bundled service')
  with urllib.request.urlopen('http://127.0.0.1:8765/api/state',timeout=2) as r:assert json.load(r)['messages']==[]
  prefs=Path(os.environ['APPDATA'])/'QQmanager/desktop.json'
- assert json.loads(prefs.read_text(encoding='utf-8'))['autoStart'] is True
+ # The backend becomes healthy before Electron finishes tray/login setup.
+ # Wait for that separate startup milestone instead of racing the first write.
+ for _ in range(100):
+  try:
+   settings=json.loads(prefs.read_text(encoding='utf-8'))
+   if settings.get('autoStart') is True:break
+  except (FileNotFoundError,json.JSONDecodeError):pass
+  time.sleep(.1)
+ else:raise AssertionError('Installed desktop did not finish autostart setup')
  print('Windows NSIS installation, installed desktop background launch, clean database and autostart preference passed.')
 finally:
  # This runner contains only this test application, never a user QQ process.
