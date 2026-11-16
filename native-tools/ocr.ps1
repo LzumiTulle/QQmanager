@@ -5,6 +5,7 @@ Add-Type -AssemblyName System.Runtime.WindowsRuntime
 $null = [Windows.Storage.StorageFile,Windows.Storage,ContentType=WindowsRuntime]
 $null = [Windows.Graphics.Imaging.BitmapDecoder,Windows.Graphics.Imaging,ContentType=WindowsRuntime]
 $null = [Windows.Media.Ocr.OcrEngine,Windows.Foundation,ContentType=WindowsRuntime]
+$null = [Windows.Globalization.Language,Windows.Globalization,ContentType=WindowsRuntime]
 $asTask = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetGenericArguments().Count -eq 1 -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
 function AwaitOperation($Operation, [Type]$ResultType) {
     $task = $asTask.MakeGenericMethod($ResultType).Invoke($null,@($Operation))
@@ -17,7 +18,9 @@ try {
     if ([long]$decoder.PixelWidth * [long]$decoder.PixelHeight -gt 40000000) { throw 'Image too large' }
     $bitmap = AwaitOperation ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
     try {
-        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+        $chinese = [Windows.Globalization.Language]::new('zh-Hans')
+        $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage($chinese)
+        if ($null -eq $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
         if ($null -eq $engine) { throw 'OCR language unavailable' }
         $result = AwaitOperation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
         @{text=($result.Lines | ForEach-Object { $_.Text }) -join "`n"} | ConvertTo-Json -Compress
