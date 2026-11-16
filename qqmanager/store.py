@@ -62,6 +62,10 @@ class Store:
         migrate(self)
         from .media import migrate as migrate_media
         migrate_media(self)
+        from .planner import migrate as migrate_planner
+        from .matters import migrate as migrate_matters
+        migrate_planner(self)
+        migrate_matters(self)
 
     def setting(self, key):
         with self.lock:
@@ -321,14 +325,17 @@ class Store:
 
     def snapshot(self, query='', group=''):
         from .llm import status
+        from .matters import list_matters
         with self.lock:
             counts = {t: self.db.execute('SELECT count(*) FROM ' + t).fetchone()[0] for t in ('messages', 'files', 'insights')}
             counts['insights'] = len(self.search('insights'))
             counts['tasks'] = self.db.execute("SELECT count(*) FROM tasks WHERE status='open'").fetchone()[0]
-            return {'llm': status(self), 'counts': counts, 'insights': self.search('insights', query, group), 'files': self.search('files', query, group),
+            matters=list_matters(self,query,group)
+            counts['matters']=len(list_matters(self))
+            return {'matters':matters,'matter_error':self.setting('matter_error') or '', 'llm': status(self), 'counts': counts, 'insights': self.search('insights', query, group), 'files': self.search('files', query, group),
                     'messages': self.search('messages', query, group),
                     'tasks': self.query('SELECT t.*, m.group_name, m.content, m.sender, m.sent_at, i.evidence, i.model FROM tasks t LEFT JOIN insights i ON i.id=t.insight_id LEFT JOIN messages m ON m.id=i.message_id ORDER BY t.status DESC,t.remind_at IS NULL,t.remind_at,t.id DESC'),
-                    'groups': [x['group_name'] for x in self.query('SELECT group_name FROM messages UNION SELECT group_name FROM files ORDER BY group_name')],
+                    'groups': [x['group_name'] for x in self.query("SELECT group_name FROM messages UNION SELECT group_name FROM files WHERE group_name!='个人课表' ORDER BY group_name")],
                     'notifications': self.query('SELECT * FROM notifications WHERE seen=0 ORDER BY id DESC'),
                     'watches': self.query('SELECT * FROM watches'),
                     'settings': {k: self.setting(k) for k in ('interests', 'bridge_enabled', 'bridge_groups', 'last_event', 'native_notifications', 'notification_error')}}

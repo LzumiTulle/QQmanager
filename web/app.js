@@ -1,15 +1,15 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const labels = {home:'信息',insights:'信息',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
+const labels = {home:'主页',timetable:'我的课表',insights:'事项',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
 let nativeState = null;
 let settingsTab='model', connectionTab='qq', sortOrder='latest', topicFilter='全部';
 let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignature='', groupSelecting=false;
-const canonicalView = name => name==='home'?'insights':labels[name]?name:'insights';
+const canonicalView = name => labels[name]?name:'home';
 function applyTheme(theme){document.documentElement.dataset.theme=theme;localStorage.setItem('qqm-theme',theme);document.querySelectorAll('[data-theme-choice]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme));});}
 applyTheme(localStorage.getItem('qqm-theme')==='dark'?'dark':'light');
 let connectorState = null, connectorSignature = '';
-let csrf = '', state = null, view = 'insights', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
+let csrf = '', state = null, view = 'home', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
 const modal = $('#modal');
 const fmt = value => value ? new Date(typeof value === 'number' ? value*1000 : value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}) : '时间未知';
 const bytes = n => n >= 1048576 ? (n/1048576).toFixed(1)+' MB' : n >= 1024 ? Math.round(n/1024)+' KB' : n+' B';
@@ -33,10 +33,11 @@ async function refresh(renderPage=true) {
   const sequence=++loadSequence;
   try {
     const query=$('#search').value, group=groupFilter;
-    const data=await api('/api/state?'+new URLSearchParams({q:query,group}));
+    const [data,calendar]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams(plannerDate?{date:plannerDate}:{}))]);
     if(sequence!==loadSequence||group!==groupFilter||query!==$('#search').value)return;
-    state=data;notice();
+    state=data;plannerState=calendar;notice();
     for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
+    $('#nav-insights').textContent=state.counts.matters;
     $('#notification-count').textContent=state.notifications.length||'';
     updateGroupOptions();
     if(renderPage)render();
@@ -71,12 +72,12 @@ function render(){
   if(!state)return;
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
   $('#page-title').textContent=labels[view];
-  $('#searchbar').hidden=['connections','settings'].includes(view);
-  $('#search').placeholder=({insights:'搜索重要信息',files:'搜索文件名或正文',tasks:'搜索待办',messages:'搜索原始消息'})[view]||'搜索';
+  $('#searchbar').hidden=['connections','settings','timetable'].includes(view);
+  $('#search').placeholder=({home:'搜索事项或相关消息',insights:'搜索事项或相关消息',files:'搜索文件名或正文',tasks:'搜索待办',messages:'搜索原始消息'})[view]||'搜索';
   $('#import-button').hidden=!['files','messages'].includes(view);
   $('#import-button').textContent=view==='files'?'导入文件':'导入记录';
   $('#new-task-button').hidden=view!=='tasks';
-  $('#content').innerHTML=({insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
+  $('#content').innerHTML=({home:homeView,timetable:timetableView,insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
   const m=state.llm||{},failed=m.counts?.failed||0;
   $('#analysis-status').textContent=failed?`${failed} 条分析失败`:m.enabled?'AI 已开启':'本地识别';
   $('#analysis-status').title=failed?'打开设置查看失败详情':'打开模型设置';
@@ -92,14 +93,14 @@ function taskRow(t){
 }
 
 function insightsView(){
- let items=state.insights.filter(i=>category==='已忽略'?i.status==='dismissed':i.status!=='dismissed'&&(category==='全部'||category==='未读'&&i.status==='new'||category==='已收藏'&&i.status==='saved'));
+ let items=(state.matters||[]).filter(i=>category==='已忽略'?i.status==='dismissed':i.status!=='dismissed'&&(category==='全部'||category==='未读'&&i.status==='new'||category==='已收藏'&&(i.saved||i.status==='saved')));
  const stamp=i=>typeof i.sent_at==='number'?i.sent_at*1000:Date.parse(i.sent_at)||0;
  if(sortOrder==='latest')items.sort((a,b)=>stamp(b)-stamp(a)||b.id-a.id);
  const grouped=QQFilters.group(items), counts=new Map(grouped.map(g=>[g.name,g.items.length]));
  const topics=['全部',...QQFilters.topics];
  const selected=topicFilter==='全部'?items:items.filter(i=>QQFilters.topic(i)===topicFilter);
  const toolbar=`<div class="toolbar topic-toolbar"><div class="tabs topic-tabs" aria-label="关键词分类">${topics.filter(t=>t==='全部'||counts.has(t)||t===topicFilter).map(t=>`<button aria-pressed="${topicFilter===t}" class="${topicFilter===t?'active':''}" data-topic="${t}">${t}<span class="topic-count">${t==='全部'?items.length:counts.get(t)||0}</span></button>`).join('')}</div><div class="filter-actions"><select id="read-filter" aria-label="阅读状态">${['全部','未读','已收藏','已忽略'].map(c=>`<option value="${c}" ${category===c?'selected':''}>${c==='全部'?'全部状态':c}</option>`).join('')}</select><select id="sort-order" aria-label="信息排序"><option value="latest" ${sortOrder==='latest'?'selected':''}>最新优先</option><option value="priority" ${sortOrder==='priority'?'selected':''}>重要优先</option></select></div></div>`;
- const body=topicFilter==='全部'?grouped.map(g=>`<section class="topic-section"><div class="topic-heading"><h2>${g.name}<span>${g.items.length}</span></h2>${g.items.length>3?`<button data-topic="${g.name}">查看全部 ${g.items.length} 条 ›</button>`:''}</div><div class="info-list">${g.items.slice(0,3).map(insightCard).join('')}</div></section>`).join(''):`<div class="list-caption">${esc(topicFilter)} · ${selected.length} 条${groupFilter?' · '+esc(groupFilter):''}</div><div class="info-list">${selected.map(insightCard).join('')}</div>`;
+ const body=topicFilter==='全部'?grouped.map(g=>`<section class="topic-section"><div class="topic-heading"><h2>${g.name}<span>${g.items.length}</span></h2>${g.items.length>3?`<button data-topic="${g.name}">查看全部 ${g.items.length} 项 ›</button>`:''}</div><div class="info-list">${g.items.slice(0,3).map(matterCard).join('')}</div></section>`).join(''):`<div class="list-caption">${esc(topicFilter)} · ${selected.length} 项${groupFilter?' · '+esc(groupFilter):''}</div><div class="info-list">${selected.map(matterCard).join('')}</div>`;
  return toolbar+(selected.length?body:textEmpty('当前分类暂无信息','可切换分类、群聊或搜索关键词。'));
 }
 
@@ -194,7 +195,7 @@ function modelStatus(){
 }
 function modelPanel(){
   const m=state.llm||{};
-  return `<section class="panel"><div class="section-title"><h2>模型分析</h2><span class="badge">通知 · 待办 · 资料</span></div><p>启用后自动分析所选群的新消息，保留逐字原文依据。发送内容包括新消息、附件提取文字、最多 7 条同群近期上下文和关注词；原始附件在本机处理，不发送未选群消息。调用费用由所选服务计收。</p><div id="model-status" class="model-status">${modelStatus()}</div><details ${m.configured?'':'open'}><summary>${m.configured?'修改模型配置':'配置模型'}</summary><form id="model-form" class="form-grid"><label>快速填写<select id="model-preset"><option value="">选择服务，或手动填写</option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="local">本机兼容接口</option></select></label><label>接口基础地址<input name="url" type="url" required value="${esc(m.url)}" placeholder="https://api.deepseek.com"><small>填写基础地址，不包含 /chat/completions。服务需支持 Chat Completions 与 JSON 输出。</small></label><label>模型名称<input name="model" required value="${esc(m.model)}" placeholder="填写服务提供的模型 ID"></label><label>API Key<input name="key" type="password" autocomplete="new-password" placeholder="${m.has_key?'已保存，留空则保持原密钥':'仅保存在本机，不会回显'}"><small>请直接在这里填写；使用免密本机服务可留空。更换服务地址时需重新填写密钥。</small></label><label class="checkbox-label"><input name="clear_key" type="checkbox">清除已保存的密钥（例如切换本机模型）</label><label>过去 24 小时调用上限<input name="daily_limit" type="number" min="1" max="5000" value="${m.daily_limit||300}" required><small>每条新消息一次调用，失败最多尝试 3 次；测试也计入上限。这是次数限制，不是金额预算。</small></label><div class="inline-actions"><button type="submit" class="primary">保存、测试并启用</button><button type="button" data-action="model-pause">暂停 AI 分析</button><button type="button" data-action="model-retry">重试失败消息</button><button type="button" data-action="model-review">按新规则整理已有消息</button></div><p id="model-test-result" role="status">${esc(m.test_error||'测试只发送内置的虚构通知，成功后开始分析排队的新消息。')}</p></form></details><p class="help">队列从本功能安装后接收的新消息开始；暂停期间继续排队，恢复后处理。取消勾选群后，尚未发送的消息会跳过。密钥保存在本机数据库，请勿分享 data 目录。</p></section>`;
+  return `<section class="panel"><div class="section-title"><h2>模型分析</h2><span class="badge">通知 · 待办 · 资料</span></div><p>启用后自动分析所选群的新消息，保留逐字原文依据。发送内容包括新消息、附件提取文字、最多 7 条同群近期上下文和关注词；同群事项标题用于归并，主动导入的课表/校历文字用于生成预览；原始附件在本机处理，不发送未选群消息。调用费用由所选服务计收。</p><div id="model-status" class="model-status">${modelStatus()}</div><details ${m.configured?'':'open'}><summary>${m.configured?'修改模型配置':'配置模型'}</summary><form id="model-form" class="form-grid"><label>快速填写<select id="model-preset"><option value="">选择服务，或手动填写</option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="local">本机兼容接口</option></select></label><label>接口基础地址<input name="url" type="url" required value="${esc(m.url)}" placeholder="https://api.deepseek.com"><small>填写基础地址，不包含 /chat/completions。服务需支持 Chat Completions 与 JSON 输出。</small></label><label>模型名称<input name="model" required value="${esc(m.model)}" placeholder="填写服务提供的模型 ID"></label><label>API Key<input name="key" type="password" autocomplete="new-password" placeholder="${m.has_key?'已保存，留空则保持原密钥':'仅保存在本机，不会回显'}"><small>请直接在这里填写；使用免密本机服务可留空。更换服务地址时需重新填写密钥。</small></label><label class="checkbox-label"><input name="clear_key" type="checkbox">清除已保存的密钥（例如切换本机模型）</label><label>过去 24 小时调用上限<input name="daily_limit" type="number" min="1" max="5000" value="${m.daily_limit||300}" required><small>新消息分析、事项归并、课表导入和测试均计入调用上限；消息失败最多尝试 3 次。这是次数限制，不是金额预算。</small></label><div class="inline-actions"><button type="submit" class="primary">保存、测试并启用</button><button type="button" data-action="model-pause">暂停 AI 分析</button><button type="button" data-action="model-retry">重试失败消息</button><button type="button" data-action="model-review">按新规则整理已有消息</button></div><p id="model-test-result" role="status">${esc(m.test_error||'测试只发送内置的虚构通知，成功后开始分析排队的新消息。')}</p></form></details><p class="help">队列从本功能安装后接收的新消息开始；暂停期间继续排队，恢复后处理。取消勾选群后，尚未发送的消息会跳过。密钥保存在本机数据库，请勿分享 data 目录。</p></section>`;
 }
 function evidenceHTML(item){
   let refs=[];try{refs=JSON.parse(item.evidence||'[]');}catch(_){}
@@ -243,7 +244,7 @@ async function handleAction(action,id){
     case 'save':await api('/api/insight',{id,status:i.status==='saved'?'new':'saved'});await refresh();if(modal.open)sourceDialog(state.insights.find(x=>x.id===id));return;
     case 'read':await api('/api/insight',{id,status:'read'});modal.close();break;
     case 'dismiss':await api('/api/insight',{id,status:i.status==='dismissed'?'new':'dismissed'});modal.close();break;
-    case 'file-detail':{const file=await api('/api/file/'+id);openModal(file.name,`<p class="help">${esc(file.parse_status)} · ${bytes(file.size)}</p>${file.kind==='image'?`<a href="/api/preview/${id}" target="_blank" rel="noopener"><img class="attachment-image" src="/api/preview/${id}" alt="${esc(file.name)}"></a>`:''}<div class="source-text">${esc(file.body?.slice(0,100000)||'暂未提取到文字。请查看原图或下载原文件。')}</div>${file.body?.length>100000?'<p class="help">仅预览前 10 万字；搜索覆盖提取全文。</p>':''}<div class="modal-actions">${/\.pdf$/i.test(file.name)?`<a href="/api/preview/${id}" target="_blank" rel="noopener">打开 PDF</a>`:''}<a class="primary" href="/api/download/${id}" download>下载原文件</a></div>`,true);return;}
+    case 'file-detail':{const file=await api('/api/file/'+id);openModal(file.name,`${currentMatter?.attachments.some(a=>a.file_id===id)?`<button data-plan="matter" data-id="${currentMatter.id}">‹ 返回事项</button>`:''}<p class="help">${esc(file.parse_status)} · ${bytes(file.size)}</p>${file.kind==='image'?`<a href="/api/preview/${id}" target="_blank" rel="noopener"><img class="attachment-image" src="/api/preview/${id}" alt="${esc(file.name)}"></a>`:''}<div class="source-text">${esc(file.body?.slice(0,100000)||'暂未提取到文字。请查看原图或下载原文件。')}</div>${file.body?.length>100000?'<p class="help">仅预览前 10 万字；搜索覆盖提取全文。</p>':''}<div class="modal-actions">${/\.pdf$/i.test(file.name)?`<a href="/api/preview/${id}" target="_blank" rel="noopener">打开 PDF</a>`:''}<a class="primary" href="/api/download/${id}" download>下载原文件</a></div>`,true);return;}
     case 'media-refresh':{const r=await api('/api/native/media/refresh',{});toast(`已请求补取 ${r.messages} 条旧消息附件；需要 QQ 保持登录及插件 0.1.5`);return;}
     case 'attachment-retry':await api('/api/attachment/retry',{id});toast('已安排重新识别');return;
     case 'watch-toggle':{const w=state.watches.find(x=>x.id===id);await api('/api/watch-toggle',{id,enabled:!w.enabled});break;}

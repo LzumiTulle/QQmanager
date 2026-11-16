@@ -29,6 +29,35 @@ do {
         row.sorted { $0.boundingBox.minX < $1.boundingBox.minX }
             .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
     }.joined(separator: "\n")
-    let data = try JSONSerialization.data(withJSONObject: ["text": text])
+    let lines: [[String:Any]] = observations.compactMap { o in
+        guard let s = o.topCandidates(1).first?.string else { return nil }
+        return ["text":s,"x":o.boundingBox.minX,"y":1-o.boundingBox.maxY,
+                "w":o.boundingBox.width,"h":o.boundingBox.height]
+    }
+    var output: [String:Any] = ["text":text,"lines":lines]
+    let dayNames = ["星期一","星期二","星期三","星期四","星期五","星期六","星期日"]
+    let headers = dayNames.compactMap { name in observations.first { $0.topCandidates(1).first?.string == name } }
+    if headers.count == 7 && zip(headers,headers.dropFirst()).allSatisfy({ $0.boundingBox.midX < $1.boundingBox.midX }) {
+        let top = headers.map { $0.boundingBox.minY }.min()!
+        let footers = observations.filter { ($0.topCandidates(1).first?.string ?? "").contains("其他课程") && $0.boundingBox.maxY < top }
+        let bottom = footers.map { $0.boundingBox.maxY }.max() ?? 0
+        var columns: [[String:Any]] = []
+        for i in 0..<7 {
+            let center = headers[i].boundingBox.midX
+            let left = i == 0 ? center-(headers[1].boundingBox.midX-center)/2 : (headers[i-1].boundingBox.midX+center)/2
+            let right = i == 6 ? center+(center-headers[5].boundingBox.midX)/2 : (headers[i+1].boundingBox.midX+center)/2
+            let column = VNRecognizeTextRequest()
+            column.recognitionLevel = .accurate
+            column.recognitionLanguages = ["zh-Hans","en-US"]
+            column.usesLanguageCorrection = true
+            column.regionOfInterest = CGRect(x:max(0,left),y:bottom,width:min(1,right)-max(0,left),height:top-bottom)
+            try VNImageRequestHandler(url:url,options:[:]).perform([column])
+            let entries = (column.results ?? []).sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+            columns.append(["weekday":i+1,"text":entries.compactMap { $0.topCandidates(1).first?.string }.joined(separator:"\n")])
+        }
+        output["columns"] = columns
+        output["footer"] = observations.filter { $0.boundingBox.midY <= bottom }.compactMap { $0.topCandidates(1).first?.string }.joined(separator:"\n")
+    }
+    let data = try JSONSerialization.data(withJSONObject: output)
     FileHandle.standardOutput.write(data)
 } catch { let e=error as NSError; FileHandle.standardError.write(Data("\(e.domain):\(e.code)".utf8)); exit(1) }

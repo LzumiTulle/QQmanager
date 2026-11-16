@@ -23,6 +23,17 @@ try {
         if ($null -eq $engine) { $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages() }
         if ($null -eq $engine) { throw 'OCR language unavailable' }
         $result = AwaitOperation ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
-        @{text=($result.Lines | ForEach-Object { $_.Text }) -join "`n"} | ConvertTo-Json -Compress
+        $lines = @($result.Lines | ForEach-Object {
+            $words = @($_.Words)
+            $left = ($words | ForEach-Object { $_.BoundingRect.X } | Measure-Object -Minimum).Minimum
+            $top = ($words | ForEach-Object { $_.BoundingRect.Y } | Measure-Object -Minimum).Minimum
+            $right = ($words | ForEach-Object { $_.BoundingRect.X + $_.BoundingRect.Width } | Measure-Object -Maximum).Maximum
+            $bottom = ($words | ForEach-Object { $_.BoundingRect.Y + $_.BoundingRect.Height } | Measure-Object -Maximum).Maximum
+            @{text=$_.Text; x=$left/$decoder.PixelWidth; y=$top/$decoder.PixelHeight; w=($right-$left)/$decoder.PixelWidth; h=($bottom-$top)/$decoder.PixelHeight}
+        })
+        $words = @($result.Lines | ForEach-Object { $_.Words } | ForEach-Object {
+            @{text=$_.Text; x=$_.BoundingRect.X/$decoder.PixelWidth; y=$_.BoundingRect.Y/$decoder.PixelHeight; w=$_.BoundingRect.Width/$decoder.PixelWidth; h=$_.BoundingRect.Height/$decoder.PixelHeight}
+        })
+        @{text=($result.Lines | ForEach-Object { $_.Text }) -join "`n"; lines=$lines; words=$words} | ConvertTo-Json -Depth 5 -Compress
     } finally { $bitmap.Dispose() }
 } finally { $stream.Dispose() }

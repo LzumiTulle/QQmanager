@@ -43,6 +43,13 @@ def native_notify(title):
 
 
 def workers(store, stop):
+    def organize():
+        from .matters import organize_step
+        while not stop.is_set():
+            try:organize_step(store)
+            except Exception:pass
+            stop.wait(10)
+    threading.Thread(target=organize,daemon=True).start()
     def attachments():
         from .media import step
         while not stop.is_set():
@@ -131,6 +138,12 @@ def make_server(store, port=8765, connector=None):
                                    selected_account=store.setting('ws_account'), collecting=store.setting('bridge_enabled')))
                 elif url.path == '/api/native':
                     self.send(native.snapshot())
+                elif url.path == '/api/planner':
+                    from .planner import snapshot
+                    self.send(snapshot(store,parse_qs(url.query).get('date',[None])[0]))
+                elif url.path.startswith('/api/matter/'):
+                    from .matters import detail
+                    self.send(detail(store,int(url.path.rsplit('/',1)[1])))
                 elif url.path == '/api/bridge':
                     if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
                         self.send({'error': '会话无效'}, 403)
@@ -155,7 +168,7 @@ def make_server(store, port=8765, connector=None):
                         return
                     row = rows[0]
                     self.send((store.blobs / row['digest']).read_bytes(), content_type='application/octet-stream', headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(row['name'])})
-                elif url.path in ('/', '/app.js', '/filter-model.js', '/style.css'):
+                elif url.path in ('/', '/app.js', '/filter-model.js', '/planner.js', '/style.css'):
                     file = ROOT / 'web' / ('index.html' if url.path == '/' else url.path[1:])
                     self.send(file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] + '; charset=utf-8')
                 else:
@@ -228,6 +241,28 @@ def make_server(store, port=8765, connector=None):
                     result = store.import_data(str(body.get('name', '聊天记录.txt')), data, body.get('group_name'), body.get('mode', 'chat'))
                 elif self.path == '/api/tasks':
                     result = {'id': store.create_task(body)}
+                elif self.path == '/api/matter':
+                    from .matters import update
+                    update(store,body)
+                elif self.path == '/api/planner/calendar':
+                    from .planner import validate_config
+                    store.set_setting('academic_calendar',validate_config(body))
+                elif self.path == '/api/planner/course':
+                    from .planner import save_course
+                    result={'id':save_course(store,body)}
+                elif self.path == '/api/planner/course/delete':
+                    with store.lock,store.db:
+                        store.db.execute('UPDATE courses SET deleted=1 WHERE id=?',(int(body['id']),))
+                elif self.path == '/api/planner/course/restore':
+                    with store.lock,store.db:
+                        store.db.execute('UPDATE courses SET deleted=0 WHERE id=?',(int(body['id']),))
+                elif self.path == '/api/planner/import':
+                    from .planner import import_draft
+                    if body.get('allow_model') is not True:raise ValueError('请先确认允许将识别文字发送给已配置的模型')
+                    result=import_draft(store,str(body.get('name','课表.txt')),base64.b64decode(body.get('data',''),validate=True),body.get('kind','courses'))
+                elif self.path == '/api/planner/apply':
+                    from .planner import apply_import
+                    result=apply_import(store,body)
                 elif self.path.startswith('/api/tasks/'):
                     store.update_task(int(self.path.rsplit('/', 1)[1]), body)
                 elif self.path == '/api/insight':

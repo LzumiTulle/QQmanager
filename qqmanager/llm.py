@@ -143,13 +143,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def request_model(config, messages, target_id, interests=''):
-    payload = {'model': config['model'], 'messages': [
+    return request_json(config, [
         {'role': 'system', 'content': PROMPT},
-        {'role': 'user', 'content': json.dumps({'target_id': target_id, 'target':next((m for m in messages if m['id']==target_id),None), 'interests': interests[:1000], 'context': [m for m in messages if m['id']!=target_id]}, ensure_ascii=False)}],
-        'response_format': {'type': 'json_object'}, 'stream': False}
+        {'role': 'user', 'content': json.dumps({'target_id': target_id, 'target':next((m for m in messages if m['id']==target_id),None), 'interests': interests[:1000], 'context': [m for m in messages if m['id']!=target_id]}, ensure_ascii=False)}])
+
+
+def request_json(config, messages, max_tokens=3000):
+    payload = {'model': config['model'], 'messages': messages,
+               'response_format': {'type': 'json_object'}, 'stream': False}
     # OpenAI and compatible services use different output-budget parameter names.
     host = urlsplit(config['url']).hostname
-    payload['max_completion_tokens' if host == 'api.openai.com' else 'max_tokens'] = 3000
+    payload['max_completion_tokens' if host == 'api.openai.com' else 'max_tokens'] = max_tokens
     if host == 'api.deepseek.com':
         payload['thinking'] = {'type': 'disabled'}
     headers = {'Content-Type': 'application/json'}

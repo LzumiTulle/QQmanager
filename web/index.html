@@ -4,13 +4,15 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QQmanager</title>
   <meta name="description" content="整理群聊重点、资料与待办。">
-  <link rel="stylesheet" href="/style.css"><script src="/filter-model.js" defer></script><script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css"><script src="/filter-model.js" defer></script><script src="/planner.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
-    <a href="#insights" class="brand"><span class="brand-icon">Q</span>QQmanager</a>
+    <a href="#home" class="brand"><span class="brand-icon">Q</span>QQmanager</a>
     <nav aria-label="主导航">
-      <button data-view="insights"><span aria-hidden="true">≡</span>信息<i id="nav-insights">0</i></button>
+      <button data-view="home"><span aria-hidden="true">⌂</span>主页</button>
+      <button data-view="timetable"><span aria-hidden="true">▦</span>课表</button>
+      <button data-view="insights"><span aria-hidden="true">≡</span>事项<i id="nav-insights">0</i></button>
       <button data-view="files"><span aria-hidden="true">▤</span>文件<i id="nav-files">0</i></button>
       <button data-view="tasks"><span aria-hidden="true">✓</span>待办<i id="nav-tasks">0</i></button>
       <button data-view="messages"><span aria-hidden="true">▦</span>记录</button>
