@@ -3,7 +3,8 @@ const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels = {home:'信息',insights:'信息',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
 let nativeState = null;
-let settingsTab='model', connectionTab='qq', sortOrder='latest', kindFilter='';
+let settingsTab='model', connectionTab='qq', sortOrder='latest', topicFilter='全部';
+let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignature='', groupSelecting=false;
 const canonicalView = name => name==='home'?'insights':labels[name]?name:'insights';
 function applyTheme(theme){document.documentElement.dataset.theme=theme;localStorage.setItem('qqm-theme',theme);document.querySelectorAll('[data-theme-choice]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme));});}
 applyTheme(localStorage.getItem('qqm-theme')==='dark'?'dark':'light');
@@ -31,19 +32,27 @@ function notice(message='') {$('#notice').hidden=!message;$('#notice').textConte
 async function refresh(renderPage=true) {
   const sequence=++loadSequence;
   try {
-    const data=await api('/api/state?'+new URLSearchParams({q:$('#search').value,group:$('#group-filter').value}));
-    if(sequence!==loadSequence)return;
+    const query=$('#search').value, group=groupFilter;
+    const data=await api('/api/state?'+new URLSearchParams({q:query,group}));
+    if(sequence!==loadSequence||group!==groupFilter||query!==$('#search').value)return;
     state=data;notice();
     for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
     $('#notification-count').textContent=state.notifications.length||'';
-    const selected=$('#group-filter').value;
-    $('#group-filter').innerHTML='<option value="">全部群聊</option>'+state.groups.map(g=>`<option value="${esc(g)}">${esc(g)}</option>`).join('');
-    $('#group-filter').value=selected;
+    updateGroupOptions();
     if(renderPage)render();
     else if($('#model-status'))$('#model-status').innerHTML=modelStatus();
     deliverBrowserNotifications();
   } catch(error) {notice('无法连接本地服务：'+error.message+'。请确认启动窗口仍在运行。');}
 }
+function updateGroupOptions(){
+ if(groupSelecting)return;
+ const names=[...new Set([...(state?.groups||[]),...(nativeState?.groups||[]).filter(g=>g.selected).map(g=>g.group_name),...(groupFilter?[groupFilter]:[])])].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+ const signature=JSON.stringify([names,groupFilter]);
+ if(signature===groupOptionsSignature)return;
+ $('#group-options').innerHTML=['',...names].map(g=>`<button role="option" aria-selected="${g===groupFilter}" data-group-value="${esc(g)}">${g===groupFilter?'✓ ':''}${esc(g||'全部群聊')}</button>`).join('');
+ $('#group-filter').textContent=(groupFilter||'全部群聊')+' ▾';groupOptionsSignature=signature;
+}
+function closeGroupMenu(){groupSelecting=false;$('#group-options').hidden=true;$('#group-filter').setAttribute('aria-expanded','false');updateGroupOptions();}
 function deliverBrowserNotifications(){
   if(!('Notification' in window)||Notification.permission!=='granted'||localStorage.getItem('qqm-browser-notifications')!=='on')return;
   for(const item of state.notifications){
@@ -54,7 +63,7 @@ function deliverBrowserNotifications(){
 }
 function setView(next){
   const target=canonicalView(next);if(target===view)return;
-  view=target;category='全部';kindFilter='';$('#search').value='';$('#group-filter').value='';
+  view=target;category='全部';topicFilter='全部';$('#search').value='';
   location.hash=view;render();refresh();window.scrollTo(0,0);
 }
 
@@ -84,15 +93,19 @@ function taskRow(t){
 
 function insightsView(){
  let items=state.insights.filter(i=>category==='已忽略'?i.status==='dismissed':i.status!=='dismissed'&&(category==='全部'||category==='未读'&&i.status==='new'||category==='已收藏'&&i.status==='saved'));
- if(kindFilter)items=items.filter(i=>i.kind===kindFilter);
  const stamp=i=>typeof i.sent_at==='number'?i.sent_at*1000:Date.parse(i.sent_at)||0;
  if(sortOrder==='latest')items.sort((a,b)=>stamp(b)-stamp(a)||b.id-a.id);
- return `<div class="toolbar"><div class="tabs" aria-label="信息状态">${['全部','未读','已收藏','已忽略'].map(c=>`<button aria-pressed="${category===c}" class="${category===c?'active':''}" data-category="${c}">${c}</button>`).join('')}</div><div class="filter-actions"><select id="kind-filter" aria-label="信息类型"><option value="">全部类型</option>${['通知','待办','资料','变更','活动','问答','关注'].map(k=>`<option ${kindFilter===k?'selected':''}>${k}</option>`).join('')}</select><select id="sort-order" aria-label="信息排序"><option value="latest" ${sortOrder==='latest'?'selected':''}>最新优先</option><option value="priority" ${sortOrder==='priority'?'selected':''}>重要优先</option></select><span class="result-count">${items.length} 条</span></div></div>${items.length?`<div class="info-list">${items.map(insightCard).join('')}</div>`:textEmpty('暂无信息',state.counts.messages?'试试其他筛选条件，或等待群里的新消息。':'在接入页连接 QQ，或在记录页导入聊天。')}${items.length>=500?'<p class="help">当前显示最多 500 条，请按群或关键词缩小范围。</p>':''}`;
+ const grouped=QQFilters.group(items), counts=new Map(grouped.map(g=>[g.name,g.items.length]));
+ const topics=['全部',...QQFilters.topics];
+ const selected=topicFilter==='全部'?items:items.filter(i=>QQFilters.topic(i)===topicFilter);
+ const toolbar=`<div class="toolbar topic-toolbar"><div class="tabs topic-tabs" aria-label="关键词分类">${topics.filter(t=>t==='全部'||counts.has(t)||t===topicFilter).map(t=>`<button aria-pressed="${topicFilter===t}" class="${topicFilter===t?'active':''}" data-topic="${t}">${t}<span class="topic-count">${t==='全部'?items.length:counts.get(t)||0}</span></button>`).join('')}</div><div class="filter-actions"><select id="read-filter" aria-label="阅读状态">${['全部','未读','已收藏','已忽略'].map(c=>`<option value="${c}" ${category===c?'selected':''}>${c==='全部'?'全部状态':c}</option>`).join('')}</select><select id="sort-order" aria-label="信息排序"><option value="latest" ${sortOrder==='latest'?'selected':''}>最新优先</option><option value="priority" ${sortOrder==='priority'?'selected':''}>重要优先</option></select></div></div>`;
+ const body=topicFilter==='全部'?grouped.map(g=>`<section class="topic-section"><div class="topic-heading"><h2>${g.name}<span>${g.items.length}</span></h2>${g.items.length>3?`<button data-topic="${g.name}">查看全部 ${g.items.length} 条 ›</button>`:''}</div><div class="info-list">${g.items.slice(0,3).map(insightCard).join('')}</div></section>`).join(''):`<div class="list-caption">${esc(topicFilter)} · ${selected.length} 条${groupFilter?' · '+esc(groupFilter):''}</div><div class="info-list">${selected.map(insightCard).join('')}</div>`;
+ return toolbar+(selected.length?body:textEmpty('当前分类暂无信息','可切换分类、群聊或搜索关键词。'));
 }
 
 function filesView(){return `<div class="list-caption">${state.files.length} 个文件</div>${state.files.length?`<table class="file-table"><thead><tr><th>文件</th><th class="hide-mobile">来源</th><th>状态</th><th><span class="sr-only">操作</span></th></tr></thead><tbody>${state.files.map(f=>`<tr><td><button class="file-open" data-action="file-detail" data-id="${f.id}"><span class="row-title">${esc(f.name)}</span><span class="row-meta">${bytes(f.size)} · ${fmt(f.created)}</span></button>${$('#search').value&&f.excerpt?`<p class="file-match">${esc(f.excerpt.slice(0,110))}</p>`:''}</td><td class="hide-mobile">${esc(f.group_name)}</td><td>${esc(f.parse_status)}</td><td><button data-action="file-detail" data-id="${f.id}">查看</button></td></tr>`).join('')}</tbody></table>`:textEmpty('暂无文件','导入文件，或在接入页设置资料文件夹。')}`;}
 
-function tasksView(){let tasks=state.tasks.filter(t=>t.status===taskFilter);const q=$('#search').value.toLowerCase(),group=$('#group-filter').value;tasks=tasks.filter(t=>(!q||t.title.toLowerCase().includes(q))&&(!group||t.group_name===group));return `<div class="toolbar"><div class="tabs"><button class="${taskFilter==='open'?'active':''}" aria-pressed="${taskFilter==='open'}" data-task-filter="open">待处理</button><button class="${taskFilter==='done'?'active':''}" aria-pressed="${taskFilter==='done'}" data-task-filter="done">已完成</button></div><span class="result-count">${tasks.length} 项 · 北京时间</span></div>${tasks.length?'<div class="task-list">'+tasks.map(t=>taskRow(t)).join('')+'</div>':textEmpty(taskFilter==='open'?'暂无待办':'暂无已完成事项','从信息详情添加，或点击右上角新建。')}`;}
+function tasksView(){let tasks=state.tasks.filter(t=>t.status===taskFilter);const q=$('#search').value.toLowerCase(),group=groupFilter;tasks=tasks.filter(t=>(!q||t.title.toLowerCase().includes(q))&&(!group||t.group_name===group));return `<div class="toolbar"><div class="tabs"><button class="${taskFilter==='open'?'active':''}" aria-pressed="${taskFilter==='open'}" data-task-filter="open">待处理</button><button class="${taskFilter==='done'?'active':''}" aria-pressed="${taskFilter==='done'}" data-task-filter="done">已完成</button></div><span class="result-count">${tasks.length} 项 · 北京时间</span></div>${tasks.length?'<div class="task-list">'+tasks.map(t=>taskRow(t)).join('')+'</div>':textEmpty(taskFilter==='open'?'暂无待办':'暂无已完成事项','从信息详情添加，或点击右上角新建。')}`;}
 
 function messagePreview(m){
  const images=(m.attachments||[]).filter(a=>a.kind==='image');
@@ -145,7 +158,7 @@ function napcatPanel(){
 async function refreshConnector(force=false){
   try{
     const [c,n]=await Promise.all([api('/api/connector'),api('/api/native')]);
-    nativeState=n;
+    nativeState=n;updateGroupOptions();
     if(c.status==='online'&&c.collecting&&c.account?.user_id===c.selected_account&&c.selected.length){
       c.message='正在自动收集所选群的新消息';
     }
@@ -191,7 +204,7 @@ function evidenceHTML(item){
 function openModal(title, body, detail=false){modal.classList.toggle('detail-drawer',detail);modal.setAttribute('aria-label',title);$('#modal-content').innerHTML=`<div class="modal-head"><h2>${esc(title)}</h2><button data-action="close-modal" aria-label="关闭">×</button></div><div class="modal-body">${body}</div>`;if(!modal.open)modal.showModal();}
 
 function importDialog(mode='chat'){
-  openModal(mode==='file'?'导入文件':'导入记录',`<form id="import-form" class="form-grid"><input type="hidden" name="mode" value="${mode}"><label>归属群聊<input name="group_name" placeholder="例如 学习群 / 项目群 / 兴趣社群" value="${esc($('#group-filter').value)}" required></label><div class="dropzone" id="dropzone"><strong>拖入文件，或点击选择</strong><p>${mode==='chat'?'TXT / JSON / CSV':'PDF / DOCX / 文本文件'} · 单文件不超过 20 MB</p><input type="file" name="files" id="import-files" multiple aria-label="选择导入文件"></div>${mode==='chat'?`<div class="divider">也可以直接粘贴聊天内容</div><label><textarea name="text" id="paste-text" placeholder="2026-11-14 09:00:00 张同学\n通知：请于明天 18:00 前提交报名表。\n\n或直接粘贴一段消息（无发送时间的相对日期需手动确认）"></textarea></label><p class="help">JSON 使用 messages 数组，消息字段为 content、sender、timestamp、group_name。CSV 使用同名表头。</p>`:''}<div id="import-result" class="progress-log" hidden></div><div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button class="primary" type="submit">开始导入</button></div></form>`);
+  openModal(mode==='file'?'导入文件':'导入记录',`<form id="import-form" class="form-grid"><input type="hidden" name="mode" value="${mode}"><label>归属群聊<input name="group_name" placeholder="例如 学习群 / 项目群 / 兴趣社群" value="${esc(groupFilter)}" required></label><div class="dropzone" id="dropzone"><strong>拖入文件，或点击选择</strong><p>${mode==='chat'?'TXT / JSON / CSV':'PDF / DOCX / 文本文件'} · 单文件不超过 20 MB</p><input type="file" name="files" id="import-files" multiple aria-label="选择导入文件"></div>${mode==='chat'?`<div class="divider">也可以直接粘贴聊天内容</div><label><textarea name="text" id="paste-text" placeholder="2026-11-14 09:00:00 张同学\n通知：请于明天 18:00 前提交报名表。\n\n或直接粘贴一段消息（无发送时间的相对日期需手动确认）"></textarea></label><p class="help">JSON 使用 messages 数组，消息字段为 content、sender、timestamp、group_name。CSV 使用同名表头。</p>`:''}<div id="import-result" class="progress-log" hidden></div><div class="modal-actions"><button type="button" data-action="close-modal">取消</button><button class="primary" type="submit">开始导入</button></div></form>`);
   const zone=$('#dropzone');
   zone.addEventListener('dragover',event=>{event.preventDefault();zone.classList.add('drag');});
   zone.addEventListener('dragleave',()=>zone.classList.remove('drag'));
@@ -259,13 +272,16 @@ async function importDemo(){
 }
 async function fileBase64(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=()=>reject(Error('文件读取失败'));r.readAsDataURL(file);});}
 document.addEventListener('click',async event=>{
+  if(!$('#group-filter-wrap').contains(event.target))closeGroupMenu();
   const button=event.target.closest('button,a');if(!button)return;
+  if(button.id==='group-filter'){if(groupSelecting)closeGroupMenu();else{updateGroupOptions();groupSelecting=true;$('#group-options').hidden=false;button.setAttribute('aria-expanded','true');}return;}
+  if(button.hasAttribute('data-group-value')){groupFilter=button.dataset.groupValue;localStorage.setItem('qqm-group-filter',groupFilter);closeGroupMenu();$('#group-filter').focus();await refresh();return;}
   if(button.dataset.removeGroup){ensureNativeDraft();nativeDraft.selected.delete(button.dataset.removeGroup);nativeDraft.dirty=true;renderNativeGroups();return;}
   if(button.dataset.view){if(button.id==='analysis-status'){settingsTab='model';if(view==='settings')render();}event.preventDefault();setView(button.dataset.view);return;}
   if(button.dataset.themeChoice){applyTheme(button.dataset.themeChoice);return;}
   if(button.dataset.settingsTab){settingsTab=button.dataset.settingsTab;render();return;}
   if(button.dataset.connectionTab){connectionTab=button.dataset.connectionTab;render();return;}
-  if(button.dataset.category){category=button.dataset.category;render();return;}
+  if(button.dataset.topic){topicFilter=button.dataset.topic;render();return;}
   if(button.dataset.taskFilter){taskFilter=button.dataset.taskFilter;render();return;}
   if(button.dataset.action){try{await handleAction(button.dataset.action,Number(button.dataset.id));}catch(error){toast(error.message);}}
 });
@@ -319,7 +335,7 @@ document.addEventListener('submit',async event=>{
 document.addEventListener('input',event=>{if(event.target.id==='native-group-search'){nativeGroupSearch=event.target.value;renderNativeGroups();}});
 document.addEventListener('change',async event=>{
 if(event.target.dataset.nativeGroup){ensureNativeDraft();const id=event.target.dataset.nativeGroup;if(event.target.checked)nativeDraft.selected.add(id);else nativeDraft.selected.delete(id);nativeDraft.dirty=true;renderNativeGroups();return;}
-if(event.target.id==='kind-filter'){kindFilter=event.target.value;render();return;}
+if(event.target.id==='read-filter'){category=event.target.value;render();return;}
 if(event.target.id==='sort-order'){sortOrder=event.target.value;render();return;}
 if(event.target.id==='model-preset'){
   const presets={deepseek:['https://api.deepseek.com','deepseek-flash'],openai:['https://api.openai.com/v1',''],local:['http://127.0.0.1:11434/v1','']};
@@ -330,8 +346,16 @@ $('#import-button').addEventListener('click',()=>importDialog(view==='files'?'fi
 $('#new-task-button').addEventListener('click',()=>taskDialog());
 $('#notifications-button').addEventListener('click',showNotifications);
 $('#search').addEventListener('input',()=>{clearTimeout(searchTimer);searchTimer=setTimeout(()=>refresh(),220);});
-$('#group-filter').addEventListener('change',()=>refresh());
+$('#group-filter-wrap').addEventListener('keydown',event=>{
+ if(event.key==='Escape'){closeGroupMenu();$('#group-filter').focus();return;}
+ if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
+ event.preventDefault();
+ if(!groupSelecting){updateGroupOptions();groupSelecting=true;$('#group-options').hidden=false;$('#group-filter').setAttribute('aria-expanded','true');}
+ const options=Array.from($('#group-options').querySelectorAll('button')),current=options.indexOf(document.activeElement);
+ const next=event.key==='Home'?0:event.key==='End'?options.length-1:event.key==='ArrowUp'?(current<=0?options.length-1:current-1):(current+1)%options.length;
+ options[next]?.focus();
+});
 window.addEventListener('hashchange',()=>setView(canonicalView(location.hash.slice(1))));
 window.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){if(!$('#searchbar').hidden){e.preventDefault();$('#search').focus();}}});
-async function boot(){try{csrf=(await api('/api/session')).csrf;view=canonicalView(location.hash.slice(1));await refresh();await refreshConnector(true);setInterval(()=>{refreshConnector();const busy=modal.open||['connections','settings'].includes(view)||$('#content').contains(document.activeElement)||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);refresh(!busy);},5000);}catch(error){notice(error.message);}}
+async function boot(){try{csrf=(await api('/api/session')).csrf;view=canonicalView(location.hash.slice(1));await refresh();await refreshConnector(true);setInterval(()=>{if(groupSelecting)return;refreshConnector();const busy=modal.open||['connections','settings'].includes(view)||$('#content').contains(document.activeElement)||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);refresh(!busy);},5000);}catch(error){notice(error.message);}}
 boot();

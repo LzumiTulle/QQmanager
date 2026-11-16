@@ -4,7 +4,7 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QQmanager</title>
   <meta name="description" content="整理群聊重点、资料与待办。">
-  <link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css"><script src="/filter-model.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
   <aside class="sidebar">
@@ -24,7 +24,7 @@
     <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="analysis-status" class="status-button" data-view="settings">本地识别</button><button id="notifications-button" aria-label="查看提醒">提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden>导入记录</button><button class="primary" id="new-task-button" hidden>新建待办</button></div></header>
     <div class="page">
       <div id="notice" role="status" hidden></div>
-      <div class="searchbar" id="searchbar"><span aria-hidden="true">⌕</span><input id="search" placeholder="搜索重要信息" aria-label="搜索内容"><kbd>⌘ K</kbd><select id="group-filter" aria-label="筛选群聊"><option value="">全部群聊</option></select></div>
+      <div class="searchbar" id="searchbar"><span aria-hidden="true">⌕</span><input id="search" placeholder="搜索重要信息" aria-label="搜索内容"><kbd>⌘ K</kbd><div class="group-filter-wrap" id="group-filter-wrap"><button id="group-filter" aria-label="筛选群聊" aria-haspopup="listbox" aria-expanded="false" aria-controls="group-options">全部群聊 ▾</button><div id="group-options" class="group-options" role="listbox" aria-label="群聊列表" hidden></div></div></div>
       <div id="content"></div>
     </div>
   </main>

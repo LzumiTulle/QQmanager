@@ -155,7 +155,7 @@ def make_server(store, port=8765, connector=None):
                         return
                     row = rows[0]
                     self.send((store.blobs / row['digest']).read_bytes(), content_type='application/octet-stream', headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(row['name'])})
-                elif url.path in ('/', '/app.js', '/style.css'):
+                elif url.path in ('/', '/app.js', '/filter-model.js', '/style.css'):
                     file = ROOT / 'web' / ('index.html' if url.path == '/' else url.path[1:])
                     self.send(file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] + '; charset=utf-8')
                 else:
