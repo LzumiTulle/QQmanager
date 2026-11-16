@@ -66,6 +66,8 @@ class Store:
         from .matters import migrate as migrate_matters
         migrate_planner(self)
         migrate_matters(self)
+        from .reschedule import migrate as migrate_reschedule
+        migrate_reschedule(self)
 
     def setting(self, key):
         with self.lock:

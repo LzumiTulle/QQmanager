@@ -43,6 +43,13 @@ def week_one(c):
     d=date.fromisoformat(c['anchor_date'])
     return d-timedelta(days=d.weekday(),weeks=c['anchor_week']-1)
 
+def save_config(s,body):
+    value=validate_config(body)
+    with s.lock,s.db:
+        if week_one(value)!=week_one(config(s)) and s.query('SELECT 1 FROM course_overrides LIMIT 1'):
+            raise ValueError('已有按日期确认的调课，请先撤销调课，再调整校历周数对应关系')
+        s.set_setting('academic_calendar',value)
+
 def school_week(c,d): return (d-week_one(c)).days//7+1
 
 def weeks(value):
@@ -84,6 +91,9 @@ def save_course(s,body):
     c=validate_course(body)
     with s.lock,s.db:
         if body.get('id'):
+            original=next((x for x in course_rows(s) if x['id']==int(body['id'])),None)
+            if original and any(original[k]!=c[k] for k in ('weekday','weeks','start_period','end_period')) and s.query('SELECT 1 FROM course_overrides WHERE course_id=?',(int(body['id']),)):
+                raise ValueError('这门课已有确认的调课，请先撤销相关调课，再修改原始星期、周次或节次')
             cur=s.db.execute('UPDATE courses SET payload=? WHERE id=? AND deleted=0',(json.dumps(c,ensure_ascii=False),int(body['id'])))
             if not cur.rowcount:raise ValueError('课程不存在')
             return int(body['id'])
@@ -91,17 +101,18 @@ def save_course(s,body):
 
 def snapshot(s,day=None):
     c=config(s); d=date.fromisoformat(day) if day else today();monday=d-timedelta(days=d.weekday());w=school_week(c,monday)
-    courses=course_rows(s);days=[]
+    from .reschedule import occurrences,list_changes
+    courses=course_rows(s);days=[];effective=occurrences(s)
     for n in range(7):
         current=monday+timedelta(days=n)
-        lessons=[dict(x) for x in courses if x['enabled'] and x['weekday']==n+1 and w in x['weeks']]
+        lessons=[dict(x) for x in effective if x['date']==current.isoformat()]
         for x in lessons:
             x['start_time']=c['blocks'][(x['start_period']-1)//2][0]
             x['end_time']=c['blocks'][(x['end_period']-1)//2][1]
             x['time_note']='按大节显示' if x['start_period']%2==0 or x['end_period']%2==1 else ''
-            x['conflict']=any(y['id']!=x['id'] and y['start_period']<=x['end_period'] and x['start_period']<=y['end_period'] for y in lessons)
+            x['conflict']=any((y['id'],y['source_date'])!=(x['id'],x['source_date']) and y['start_period']<=x['end_period'] and x['start_period']<=y['end_period'] for y in lessons)
         days.append(dict(date=current.isoformat(),weekday=n+1,courses=sorted(lessons,key=lambda x:x['start_period'])))
-    return dict(config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,
+    return dict(config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=list_changes(s),
                 unscheduled=[x for x in courses if x['enabled'] and x['weekday']==0 and w in x['weeks']])
 
 def table_columns(layout):
@@ -203,7 +214,7 @@ def apply_import(s,body):
         row=found[0]
         if row['applied']:return {'added':0,'already_applied':True}
         result=json.loads(row['result']);added=0
-        if row['kind']=='calendar':s.set_setting('academic_calendar',validate_config(body.get('calendar') or result['calendar']))
+        if row['kind']=='calendar':save_config(s,body.get('calendar') or result['calendar'])
         else:
             for c in result['courses']:
                 key=hashlib.sha256(json.dumps(c,sort_keys=True,ensure_ascii=False).encode()).hexdigest()

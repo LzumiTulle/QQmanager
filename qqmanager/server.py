@@ -50,6 +50,13 @@ def workers(store, stop):
             except Exception:pass
             stop.wait(10)
     threading.Thread(target=organize,daemon=True).start()
+    def reschedule():
+        from .reschedule import recognize_step
+        while not stop.is_set():
+            try:recognize_step(store)
+            except Exception:pass
+            stop.wait(15)
+    threading.Thread(target=reschedule,daemon=True).start()
     def attachments():
         from .media import step
         while not stop.is_set():
@@ -141,6 +148,9 @@ def make_server(store, port=8765, connector=None):
                 elif url.path == '/api/planner':
                     from .planner import snapshot
                     self.send(snapshot(store,parse_qs(url.query).get('date',[None])[0]))
+                elif url.path.startswith('/api/planner/change/'):
+                    from .reschedule import review
+                    self.send(review(store,int(url.path.rsplit('/',1)[1])))
                 elif url.path.startswith('/api/matter/'):
                     from .matters import detail
                     self.send(detail(store,int(url.path.rsplit('/',1)[1])))
@@ -245,8 +255,14 @@ def make_server(store, port=8765, connector=None):
                     from .matters import update
                     update(store,body)
                 elif self.path == '/api/planner/calendar':
-                    from .planner import validate_config
-                    store.set_setting('academic_calendar',validate_config(body))
+                    from .planner import save_config as save_calendar
+                    save_calendar(store,body)
+                elif self.path == '/api/planner/change/confirm':
+                    from .reschedule import apply
+                    result=apply(store,body)
+                elif self.path == '/api/planner/change/action':
+                    from .reschedule import action
+                    action(store,body)
                 elif self.path == '/api/planner/course':
                     from .planner import save_course
                     result={'id':save_course(store,body)}

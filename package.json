@@ -1,6 +1,6 @@
 {
   "name": "qqmanager-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local QQ group information assistant with evidence-backed AI analysis",
   "author": "QQmanager contributors",
   "license": "MIT",
@@ -77,7 +77,7 @@
       "deleteAppDataOnUninstall": false
     },
     "dmg": {
-      "title": "QQmanager 0.3.0",
+      "title": "QQmanager 0.3.1",
       "contents": [
         {
           "x": 150,
