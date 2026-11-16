@@ -125,3 +125,20 @@ test('partial group callbacks retain earlier batches and update names without du
  assert.deepEqual(mergeGroups(second,[]),second);
  assert.deepEqual(mergeGroups([],second.slice(1)),second.slice(1));
 });
+test('attachment worker downloads only selected message media and repairs known fingerprints',async()=>{
+ const {createMedia,fingerprint}=require('../plugins/qqmanager-native/media.cjs');
+ const fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+ const dir=await fs.mkdtemp(path.join(os.tmpdir(),'qqm-media-'));
+ let listener,done;const uploaded=new Promise(resolve=>done=resolve),requests=[],recovered=[];
+ const row={...message(),elements:[{elementId:'80001',picElement:{fileName:'考试.png',fileSize:3}}]};
+ const media=createMedia({directory:dir,authorized:(a,g)=>a==='777777'&&g==='123456',signal:()=>{},enqueue:x=>recovered.push(x),request:async(url,body)=>{requests.push({url,body});done();}});
+ const service={addKernelMsgListener(cb){listener=cb;},async downloadRichMedia(args){await fs.writeFile(args.filePath,Buffer.from('abc'));listener.onRichMediaDownloadComplete({msgId:row.msgId,msgElementId:'80001',filePath:args.filePath});},async getAioFirstViewLatestMsgs(){return {msgList:[row,{...row,msgId:'900000000'}]};}};
+ try{
+  media.ready(()=> '777777',service);
+  const event=normalizeMessage(row,'777777',new Set(['123456']),now);
+  media.remember(row,event);media.delivered([event]);await uploaded;
+  assert.equal(requests[0].url,'/api/native/attachment');assert.equal(requests[0].body.data,'YWJj');assert(!JSON.stringify(requests).includes(dir));
+  await media.recover({enabled:true,account:'777777',groups:['123456'],media_refresh:1,media_targets:[{group:'123456',fingerprint:fingerprint('777777','123456',row.msgId)}]});
+  assert.equal(recovered.length,1);assert.equal(recovered[0].recovery,true);
+ }finally{await fs.rm(dir,{recursive:true,force:true});}
+});

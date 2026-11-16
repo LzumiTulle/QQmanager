@@ -196,7 +196,7 @@ class WorkflowHTTPTests(unittest.TestCase):
                 body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 request=json.loads(body['messages'][1]['content'])
                 calls.append(request)
-                row=next(r for r in request['context'] if r['id']==request['target_id'])
+                row=request['target']
                 result={'items':[{'kind':'待办','title':'提交报名表','reason':'明确要求提交',
                     'evidence':[{'message_id':row['id'],'quote':row['content']}]}]}
                 raw=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(result)}}]}).encode()

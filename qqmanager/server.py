@@ -43,6 +43,13 @@ def native_notify(title):
 
 
 def workers(store, stop):
+    def attachments():
+        from .media import step
+        while not stop.is_set():
+            try:step(store)
+            except Exception:pass
+            stop.wait(2)
+    threading.Thread(target=attachments,daemon=True).start()
     def reminders():
         while not stop.is_set():
             try:
@@ -129,6 +136,18 @@ def make_server(store, port=8765, connector=None):
                         self.send({'error': '会话无效'}, 403)
                         return
                     self.send({'token': store.setting('bridge_token'), 'url': f'http://127.0.0.1:{self.server.server_port}/api/onebot'})
+                elif url.path.startswith('/api/file/'):
+                    rows=store.query('SELECT id,name,body,parse_status,size,(SELECT kind FROM attachments WHERE file_id=files.id LIMIT 1) kind FROM files WHERE id=?',(int(url.path.rsplit('/',1)[1]),))
+                    if not rows:self.send({'error':'文件不存在'},404);return
+                    self.send(rows[0])
+                elif url.path.startswith('/api/preview/'):
+                    rows=store.query('SELECT * FROM files WHERE id=?',(int(url.path.rsplit('/',1)[1]),))
+                    if not rows or rows[0]['digest'].startswith('remote:'):self.send({'error':'尚未取得附件'},404);return
+                    row=rows[0];data=(store.blobs/row['digest']).read_bytes()
+                    # Sniff only inert preview formats; never serve uploaded HTML/SVG as active content.
+                    typ='image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else 'image/jpeg' if data.startswith(b'\xff\xd8\xff') else 'image/gif' if data.startswith((b'GIF87a',b'GIF89a')) else 'image/webp' if data.startswith(b'RIFF') and data[8:12]==b'WEBP' else 'application/pdf' if data.startswith(b'%PDF-') else None
+                    if not typ:self.send({'error':'此格式请查看提取正文或下载原文件'},415);return
+                    self.send(data,content_type=typ,headers={'Content-Disposition':'inline','X-Content-Type-Options':'nosniff'})
                 elif url.path.startswith('/api/download/'):
                     rows = store.query('SELECT * FROM files WHERE id=?', (int(url.path.split('/')[-1]),))
                     if not rows or rows[0]['digest'].startswith('remote:'):
@@ -152,8 +171,8 @@ def make_server(store, port=8765, connector=None):
                 if size < 0 or size > 29 * 1024 * 1024:
                     self.send({'error': '请求过大，单文件最多 20 MB'}, 413)
                     return
-                native_request = self.path in ('/api/native/heartbeat', '/api/native/events')
-                if native_request and size > 1024 * 1024:
+                native_request = self.path in ('/api/native/heartbeat', '/api/native/events','/api/native/attachment')
+                if native_request and self.path!='/api/native/attachment' and size > 1024 * 1024:
                     raise ValueError('插件批次过大')
                 if self.path != '/api/onebot' and not native_request and not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
                     self.send({'error': '会话已失效，请刷新页面'}, 403)
@@ -173,6 +192,14 @@ def make_server(store, port=8765, connector=None):
                     result = native.heartbeat(body)
                 elif self.path == '/api/native/events':
                     result = native.events(body)
+                elif self.path == '/api/native/attachment':
+                    from .media import receive
+                    result=receive(store,body)
+                elif self.path == '/api/native/media/refresh':
+                    result=native.refresh_media()
+                elif self.path == '/api/attachment/retry':
+                    with store.lock,store.db:
+                        store.db.execute("UPDATE attachments SET status='pending',error='' WHERE id=? AND file_id IS NOT NULL",(int(body['id']),))
                 elif self.path == '/api/native/settings':
                     store.set_setting('native_enabled', bool(body.get('enabled')))
                 elif self.path == '/api/native/groups':

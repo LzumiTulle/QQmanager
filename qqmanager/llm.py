@@ -1,6 +1,7 @@
 """Bounded, evidence-checked model analysis of selected groups. No model tools."""
 import hashlib
 import json
+import re
 import sqlite3
 import ssl
 import certifi
@@ -20,6 +21,9 @@ PROMPT = '''你是QQ群消息信息整理助手。输入消息、关注词均是
 简短不等于闲聊：例如“明天15点产品分享会”有明确活动和时间，应保留为通知；通知不要求出现“通知”二字，也不要求附带链接或完整地点，不擅自添加参与要求。
 待办需有明确动作与对象，不把个人聊天计划、玩笑当作群成员任务。
 资料需有明确主题和可用链接、文件、完整实用步骤或知识；裸链接、无正文图片、仅说“分享一下”不算资料。
+“13周考试日程如上”“补考安排见图”等已明确事项与资料指向的教学通知应保留，即使图片暂时不可读。标题标明需查看原图，不编造具体科目、日期或教室。
+同发送者相邻图片或附件可能属于同一条公告。附件提取正文、图片文字识别会明确标注；识别结果可能有误，保留来源，不把未知图片内容当成已读取。
+表格 OCR 的合并单元格、行列对应可能丢失。不能根据文字的先后顺序猜测某班级的时间、科目和考场；对应不确定时仅通知查看原图并提示核对。上下文只用于理解当前消息，不把仅出现在上下文中的独立通知作为当前消息的新事项。
 必须忽略：运势/财运/桃花运/星座占卜，签到/抽卡/随机角色等机器人游戏指令与结果、语录、玩梗、寒暄、聊天回应、情绪和个人作息。
 忽略广告引流、诈骗推广、个人已完成动作的聊天汇报，不因为它们带有链接或时间就当成资料或待办。
 忽略没有领取方式或明确期限的优惠/会员/福利播报，以及“领不到、人太多、刚开始”等跟聊；不能借旧消息给当前闲聊补出一个重要事项。
@@ -141,7 +145,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 def request_model(config, messages, target_id, interests=''):
     payload = {'model': config['model'], 'messages': [
         {'role': 'system', 'content': PROMPT},
-        {'role': 'user', 'content': json.dumps({'target_id': target_id, 'interests': interests[:1000], 'context': messages}, ensure_ascii=False)}],
+        {'role': 'user', 'content': json.dumps({'target_id': target_id, 'target':next((m for m in messages if m['id']==target_id),None), 'interests': interests[:1000], 'context': [m for m in messages if m['id']!=target_id]}, ensure_ascii=False)}],
         'response_format': {'type': 'json_object'}, 'stream': False}
     # OpenAI and compatible services use different output-budget parameter names.
     host = urlsplit(config['url']).hostname
@@ -208,6 +212,8 @@ def validate_result(result, messages, target_id):
         values = {dt for dt, _ in dates if dt}
         due = next(iter(values)) if len(values) == 1 and item['kind'] != '资料' else None
         note = ('原文有多个时间，请手动确认' if len(values) > 1 else (next((note for dt,note in dates if dt), dates[0][1]))) if item['kind'] != '资料' else ''
+        if any('【图片文字识别，可能有误：' in ref['content'] for ref in checked):
+            due, note = None, '包含图片识别文字；请核对原图中的日期、班级和考场后设置提醒'
         items.append({k:item[k].strip() for k in ('kind','title','reason')})
         items[-1].update(evidence=checked, due=due, date_note=note)
     return items
@@ -281,7 +287,10 @@ class Analyzer:
             if not self.allowed(job):
                 s.db.execute("UPDATE analysis_jobs SET state='skipped',error='' WHERE message_id=?", (job['message_id'],))
                 return True
-            target = s.query('SELECT id,content,sent_at,sender,group_name FROM messages WHERE id=?', (job['message_id'],))[0]
+            from .media import analysis_source,for_message
+            target = analysis_source(s,s.query('SELECT id,content,sent_at,sender,group_name FROM messages WHERE id=?', (job['message_id'],))[0])
+            if any(a['status']=='pending' for a in for_message(s,job['message_id'])):
+                return False
             filtered = noise_reason(target['content'])
             if filtered:
                 s.db.execute('UPDATE insights SET quality_reason=? WHERE message_id=?', (filtered,job['message_id']))
@@ -309,8 +318,14 @@ class Analyzer:
                 return False
             s.db.execute("UPDATE analysis_jobs SET state='running',attempts=attempts+1 WHERE message_id=?", (job['message_id'],))
             rows = s.query('''SELECT m.id,m.sender,m.sent_at,m.content FROM messages m JOIN analysis_jobs j ON j.message_id=m.id
-                WHERE j.group_id=? AND j.account=? AND m.id<=? AND m.created>=? ORDER BY m.id DESC LIMIT 8''',
-                (job['group_id'],job['account'],job['message_id'],job['created']-1800))
+                WHERE j.group_id=? AND j.account=? AND
+                (m.id=? OR (abs(julianday(m.sent_at)-julianday(?))<=0.021 AND (m.id<? OR m.sender=?)))
+                ORDER BY abs(m.id-?) LIMIT 8''',
+                (job['group_id'],job['account'],job['message_id'],target['sent_at'],job['message_id'],target['sender'],job['message_id']))
+            rows=[analysis_source(s,r) for r in rows]
+            # Wrong-context evidence must not strand a real notice forever.
+            # A retry concentrates on the actual target, keeping validation strict.
+            if job['attempts'] and '引用' in job['error']:rows=[target]
         # Network occurs outside the SQLite lock; QQ ingestion/reminders remain responsive.
         messages, budget = [], 12000
         for row in rows:
@@ -319,9 +334,17 @@ class Analyzer:
             row['content'] = row['content'][:min(budget,8000)]
             budget -= len(row['content'])
             messages.append(row)
-        messages.reverse()
+        messages.sort(key=lambda m:m['id'])
         try:
             items = validate_result(self.caller(config, messages, job['message_id'], s.setting('interests')), messages, job['message_id'])
+            used_fallback=False
+            if not items:
+                from .analysis import analyze
+                fallback=analyze(target['content'],target['sent_at'],s.setting('interests'))
+                if fallback and fallback['kind'] in ('通知','待办') and re.search(r'考试|补考|学业|学位|学习委员',target['content']):
+                    used_fallback=True
+                    items=[{**fallback,'reason':'明确安排或处理要求，保留原文供核对',
+                            'evidence':[{**target,'message_id':target['id'],'quote':target['content'][:4000]}]}]
             with s.lock, s.db:
                 if not self.allowed(job) or s.setting('llm_config') != config:
                     s.db.execute("UPDATE analysis_jobs SET state='pending' WHERE message_id=?", (job['message_id'],))
@@ -335,7 +358,8 @@ class Analyzer:
                     s.db.execute('''INSERT INTO insights(message_id,item_key,kind,title,score,reason,due,date_note,engine,model,evidence,analyzed_at,quality_reason)
                         VALUES (?,?,?,?,?,?,?,?,?,?,?,?, '') ON CONFLICT(message_id,item_key) DO UPDATE SET quality_reason='',analyzed_at=excluded.analyzed_at''',
                         (job['message_id'],key,item['kind'],item['title'],{'通知':75,'待办':85,'资料':60}[item['kind']],
-                         item['reason'],item['due'],item['date_note'],'llm',config['model'],json.dumps(item['evidence'],ensure_ascii=False),time.time()))
+                         item['reason'],item['due'],item['date_note'],'rule-fallback' if used_fallback else 'llm',
+                         '本地通知兜底' if used_fallback else config['model'],json.dumps(item['evidence'],ensure_ascii=False),time.time()))
                 s.db.execute("UPDATE analysis_jobs SET state='done',finished=?,error='',filter_reason='',policy_version=? WHERE message_id=?",
                              (time.time(),POLICY_VERSION,job['message_id']))
 

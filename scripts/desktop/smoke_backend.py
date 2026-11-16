@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory() as directory:
    def do_POST(self):
     request=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
     context=json.loads(request['messages'][-1]['content'])
-    row=next(x for x in context['context'] if x['id']==context['target_id'])
+    row=context['target']
     result={'items':[{'kind':'通知','title':'模拟通知','reason':'明确通知','evidence':[{'message_id':row['id'],'quote':row['content']}]}]}
     body=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(result)}}]}).encode()
     self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)

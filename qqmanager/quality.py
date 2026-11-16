@@ -3,7 +3,7 @@ import re
 from datetime import timedelta
 from .analysis import timestamp
 
-POLICY_VERSION = 2
+POLICY_VERSION = 3
 
 def readable(text):
     return re.sub(r'\[[^\]\n]{0,40}[：:]未解析\]', '', str(text)).strip()

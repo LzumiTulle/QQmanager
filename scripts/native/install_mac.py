@@ -73,7 +73,7 @@ setImmediate(()=>{try {if(global.launcher?.installPathPkgJson)global.launcher.in
         raise SystemExit('QQ 版本或入口在准备后有变化，请重新核查。')
     if bootstrap.exists():raise SystemExit('入口扩展文件已存在，停止覆盖。')
     profile=Path(plan['profile']);profile.mkdir(parents=True,exist_ok=True,mode=0o700)
-    for name in ('main.cjs','core.cjs','manifest.json'):
+    for name in ('main.cjs','core.cjs','media.cjs','manifest.json'):
         atomic(profile/name,(ROOT/'plugins/qqmanager-native'/name).read_bytes())
     atomic(profile/'config.json',(stage/'config.json').read_bytes())
     patched=dict(parsed,main=NEW_MAIN);raw=(json.dumps(patched,ensure_ascii=False,indent=2)+'\n').encode()

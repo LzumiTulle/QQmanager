@@ -37,6 +37,9 @@ jobs:
       - run: python -m pip install -r requirements-build.txt
       - run: npm ci
       - run: python -B -m unittest discover -s tests
+      - run: python -B -m unittest discover -s tests -p test_ocr_native.py
+        env:
+          QQMANAGER_TEST_OCR: '1'
       - run: node --test tests/desktop.test.cjs tests/native_plugin.test.cjs
       - run: python scripts/desktop/build_backend.py
       - run: python scripts/desktop/smoke_backend.py

@@ -43,6 +43,8 @@ def segments(value):
             parts.append('@' + str(data.get('qq', '')))
         elif typ == 'file':
             parts.append('[文件：' + str(data.get('name', data.get('file', '未知文件'))) + ']')
+        elif typ == 'image':
+            parts.append('[图片：未解析]')
         else:
             parts.append('[' + typ + '：未解析]')
     return ''.join(parts)

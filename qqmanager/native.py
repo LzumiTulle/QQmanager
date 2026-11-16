@@ -11,6 +11,12 @@ class NativeBridge:
         self.received = self.saved = 0
         self.last_event = None
         self.group_refresh = 0
+        self.media_refresh = 0
+
+    def refresh_media(self):
+        from .media import recovery_targets
+        with self.lock:self.media_refresh += 1
+        return {'requested':True,'messages':len(recovery_targets(self.store))}
 
     def group_catalog(self):
         s = self.store
@@ -94,8 +100,10 @@ class NativeBridge:
         report['last_seen'] = time.time()
         with self.lock:
             self.report = report
+        from .media import recovery_targets
         return {'enabled': bool(s.setting('native_enabled') and s.setting('bridge_enabled')),
-                'account': s.setting('ws_account'), 'groups': s.setting('bridge_groups'), 'group_refresh':self.group_refresh}
+                'account': s.setting('ws_account'), 'groups': s.setting('bridge_groups'), 'group_refresh':self.group_refresh,
+                'media_refresh':self.media_refresh,'media_targets':recovery_targets(s)}
 
     def events(self, body):
         s = self.store
@@ -111,18 +119,27 @@ class NativeBridge:
             if not isinstance(event.get('message'),list) or len(event['message'])>200:
                 raise ValueError('无效消息段')
             for seg in event['message']:
-                if not isinstance(seg,dict) or seg.get('type') not in ('text','file') or not isinstance(seg.get('data'),dict):
-                    raise ValueError('只接收文本和文件名')
+                if not isinstance(seg,dict) or seg.get('type') not in ('text','file','image') or not isinstance(seg.get('data'),dict):
+                    raise ValueError('无效消息或附件')
                 value=seg['data'].get('text' if seg['type']=='text' else 'name')
                 if not isinstance(value,str) or len(value)>20000:
                     raise ValueError('消息段过长或无效')
+                if seg['type']!='text':
+                    if not isinstance(seg['data'].get('element_id',''),str) or len(seg['data'].get('element_id',''))>40:
+                        raise ValueError('附件标识无效')
+                    if type(seg['data'].get('size',0)) not in (int,float) or not 0<=seg['data'].get('size',0)<=2**40:
+                        raise ValueError('附件大小无效')
             if not isinstance(event.get('time'),(int,float)) or not str(event.get('message_id','')).lstrip('-').isdigit():
                 raise ValueError('缺少消息时间或标识')
         if not s.setting('native_enabled') or not s.setting('bridge_enabled'):
             raise ValueError('插件收集已暂停，消息应继续在客户端排队')
         saved=0
         for event in events:
+            from .media import fingerprint,register
+            if event.get('recovery') and not s.query('SELECT id FROM messages WHERE fingerprint=?',(fingerprint(event['self_id'],event['group_id'],event['message_id']),)):
+                continue
             result=s.onebot(event,source='QQ 客户端插件')
+            if str(event.get('group_id')) in s.setting('bridge_groups'):register(s,event)
             saved+=result.get('messages',0)
         with self.lock:
             self.received+=len(events);self.saved+=saved

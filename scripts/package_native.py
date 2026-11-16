@@ -7,7 +7,7 @@ import zipfile
 ROOT=Path(__file__).resolve().parent.parent
 out=ROOT/'dist';out.mkdir(exist_ok=True)
 plugin=ROOT/'plugins/qqmanager-native'
-files=['core.cjs','main.cjs','manifest.json']
+files=['core.cjs','main.cjs','media.cjs','manifest.json']
 with zipfile.ZipFile(out/'QQmanager-native-plugin-0.1.0.zip','w',zipfile.ZIP_DEFLATED) as z:
     for name in files:z.write(plugin/name,name)
     z.write(ROOT/'docs/NATIVE-PLUGIN.md','README.md')

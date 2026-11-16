@@ -60,6 +60,8 @@ class Store:
         self.db.commit()
         from .llm import migrate
         migrate(self)
+        from .media import migrate as migrate_media
+        migrate_media(self)
 
     def setting(self, key):
         with self.lock:
@@ -152,7 +154,7 @@ class Store:
             sql = 'SELECT id,name,group_name,size,parse_status,source,created,substr(body,1,350) excerpt FROM files WHERE 1=1'
             fields, order = ['name', 'body'], 'id DESC'
         elif table == 'messages':
-            sql = 'SELECT m.*,j.state analysis_state,j.error analysis_error,j.filter_reason analysis_reason FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE 1=1'
+            sql = 'SELECT m.*,j.group_id live_group,j.account live_account,j.state analysis_state,j.error analysis_error,j.filter_reason analysis_reason FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE 1=1'
             fields, order = ['m.content', 'm.sender'], 'm.id DESC'
         else:
             raise ValueError('未知搜索类型')
@@ -166,6 +168,10 @@ class Store:
             args.extend(['%' + escaped + '%'] * len(fields))
         # Bounded UI response; raw records remain in SQLite.
         rows=self.query(sql + ' ORDER BY ' + order + ' LIMIT 500', args)
+        if table in ('messages','insights'):
+            from .media import for_message
+            for row in rows:
+                row['attachments']=for_message(self,row['message_id'] if table=='insights' else row['id'])
         return merge_notices(rows) if table=='insights' else rows
 
     def update_insight(self, insight_id, status):

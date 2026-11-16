@@ -12,8 +12,12 @@ function normalizeMessage(row, account, groups, startedAt) {
   const segments=[];
   for (const e of row.elements.slice(0,200)) {
     if (e.textElement && typeof e.textElement.content==='string') segments.push({type:'text',data:{text:e.textElement.content.slice(0,20000)}});
-    else if (e.fileElement) segments.push({type:'file',data:{name:String(e.fileElement.fileName||'未命名文件').slice(0,250)}});
-    else if(e.picElement) segments.push({type:'text',data:{text:'[图片：未解析]'}});
+    else if (e.fileElement || e.picElement) {
+      const f=e.fileElement||e.picElement;
+      segments.push({type:e.picElement?'image':'file',data:{name:String(f.fileName||(e.picElement?'图片.jpg':'未命名文件')).slice(0,250),element_id:String(e.elementId||'').slice(0,40),size:Math.max(0,Math.min(Number(f.fileSize)||0,2**40))}});
+    }
+    else if(e.faceElement || e.marketFaceElement) segments.push({type:'text',data:{text:'[表情]'}});
+    else if(e.replyElement) segments.push({type:'text',data:{text:'[引用消息]'}});
     else if(e.pttElement) segments.push({type:'text',data:{text:'[语音：未解析]'}});
     else if(e.videoElement) segments.push({type:'text',data:{text:'[视频：未解析]'}});
     else segments.push({type:'text',data:{text:'[其他消息类型：未解析]'}});
@@ -99,7 +103,7 @@ function mergeGroups(previous, incoming) {
   for(const group of incoming)groups.set(group.group_id,group);
   return [...groups.values()].slice(0,1000);
 }
-function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}) {
+function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}, mediaCallbacks={}) {
   if(!native?.NodeIQQNTWrapperSession)return native;
   const originals=new WeakMap(),sessions=new WeakMap(),services=new WeakMap();
   const unwrap=x=>x && (typeof x==='object'||typeof x==='function') ? originals.get(x)||x : x;
@@ -158,6 +162,7 @@ function observerExports(native, notify, diagnose=()=>{}, groupCallbacks={}) {
             return invoke();
           });
           services.set(result,service);diagnose('message_service_hooked');
+          try{mediaCallbacks.ready?.(()=>account,result);}catch(_){diagnose('media_service_failed');}
         }
         return services.get(result);
       }

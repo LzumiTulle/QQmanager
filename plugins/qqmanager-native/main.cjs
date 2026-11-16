@@ -3,6 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const http=require('node:http');
 const {normalizeMessage,observerExports,mergeGroups}=require('./core.cjs');
+const {createMedia}=require('./media.cjs');
 let active=false;
 function start(configPath) {
   if(active)return;active=true;
@@ -11,9 +12,10 @@ function start(configPath) {
   if(url.protocol!=='http:' || url.hostname!=='127.0.0.1' || url.pathname!=='/' || url.username || url.password || url.search || url.hash)throw Error('Local endpoint required');
   if(typeof config.token!=='string'||config.token.length<32)throw Error('Local pairing required');
   const directory=path.dirname(configPath),outboxPath=path.join(directory,'outbox.json');
-  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.4',events:0,selected:0,dropped:0,signals:{}};
+  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.5',events:0,selected:0,dropped:0,signals:{}};
   const allowed=new Set(config.groups||[]);let account=String(config.account||''),enabled=false,queue=[],busy=false,lastError='',lastConfig=0,identity='';
   const seen=new Set();
+  const media=createMedia({directory,authorized:(who,group)=>enabled&&String(who)===account&&allowed.has(String(group)),request,signal,enqueue:event=>{if(queue.length<2000)queue.push(event);}});
   let groupReader=null,groupIdentity=null,groupCatalog=null,groupRevision=0,lastGroupRequest=0,groupRefreshSeen=-1;
   const groupCallbacks={
     ready(getAccount,read){groupIdentity=getAccount;groupReader=read;},
@@ -39,14 +41,14 @@ function start(configPath) {
       if(seen.has(key))continue;
       if(queue.length>=2000){diagnostics.dropped++;continue;}
       seen.add(key);if(seen.size>5000)seen.delete(seen.values().next().value);
-      queue.push(message);diagnostics.selected++;
+      media.remember(row,message);queue.push(message);diagnostics.selected++;
     }
   }
   const wrapped=new WeakMap();
   function inspect(exports){
     if(!exports || (typeof exports!=='object'&&typeof exports!=='function'))return exports;
     if(wrapped.has(exports))return wrapped.get(exports);
-    const result=observerExports(exports,observe,signal,groupCallbacks);wrapped.set(exports,result);wrapped.set(result,result);return result;
+    const result=observerExports(exports,observe,signal,groupCallbacks,media);wrapped.set(exports,result);wrapped.set(result,result);return result;
   }
   const originalDlopen=process.dlopen;
   process.dlopen=function(module,filename,...rest){
@@ -73,6 +75,7 @@ function start(configPath) {
         const result=await request('/api/native/heartbeat',{...diagnostics,account:identity||groupIdentity?.()||'',queued:queue.length,error:lastError,
           ...(groupCatalog?.account===account?{group_catalog:groupCatalog}:{})});
         account=String(result.account||'');enabled=!!result.enabled;allowed.clear();for(const g of result.groups||[])allowed.add(String(g));lastConfig=Date.now();
+        media.recover(result).catch(()=>signal('attachment_recovery_failed'));
         if(groupCatalog&&groupCatalog.account!==account)groupCatalog=null;
         if(groupReader&&groupIdentity?.()===account&&Date.now()-lastGroupRequest>10000&&
            (!groupCatalog||groupRefreshSeen!==result.group_refresh)){
@@ -89,7 +92,7 @@ function start(configPath) {
       if(enabled&&queue.length){
         const batch=[];let bytes=20;
         for(const event of queue.slice(0,20)){const size=Buffer.byteLength(JSON.stringify(event))+1;if(bytes+size>900000)break;batch.push(event);bytes+=size;}
-        await request('/api/native/events',{events:batch});queue.splice(0,batch.length);
+        await request('/api/native/events',{events:batch});queue.splice(0,batch.length);media.delivered(batch);
       }
       lastError='';
     }catch(_){lastError='本地服务暂不可达，已排队重试';}

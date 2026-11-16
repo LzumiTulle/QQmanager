@@ -72,14 +72,16 @@ def analyze(text, sent_at=None, interests=''):
     if noise_reason(text):
         return None
     body = readable(text)
+    if re.search(r'(?:考试|补考).{0,12}(?:好烦|好难|紧张|要寄|完蛋|不想考)[啊呀了。！!]*$',body) and not re.search(r'通知|安排|日程|请|务必',body):
+        return None
     if re.search(r'^(?:请问|怎么|如何|有没有|谁知道)|[？?]$',body) and not re.search(r'解决方法|解决步骤|解答|答[：:]',body):
         return None
     # A keyword alone is not evidence of a useful announcement.
-    action = re.search(r'(?:提交|填写|交付|交材料|报送|缴费|上传|确认|反馈|完成).{1,60}', body)
+    action = re.search(r'(?:提交|填写|交付|交材料|报送|缴费|上传|确认|反馈|完成|核查|核对|收集).{1,60}', body)
     directive = re.search(r'请|务必|必须|需要|应于|截止|截至|前|记得|^(?:提交|填写|报送|交付)|^(?:通知|公告)[：:]', body)
     personal_report = re.search(r'^(?:我|本人|已经|刚刚|已提交|已填写)|(?:提交|填写|报送|交付).{0,20}(?:了|完了|好了)[。！!]*$', body)
-    schedule = re.search(r'会议|开会|停课|停电|停水|维护|考试|培训|集合|比赛|赛事|公开赛|决赛|联赛|[A-Za-z]赛|报名|课程|讲座|分享会', body)
-    timing = re.search(r'今天|今日|明天|后天|周[一二三四五六日天]|\d{1,2}[:：点时月日]|延期|改期|取消|推迟|调整', body)
+    schedule = re.search(r'会议|开会|停课|停电|停水|维护|考试|补考|培训|集合|比赛|赛事|公开赛|决赛|联赛|[A-Za-z]赛|报名|课程|讲座|分享会', body)
+    timing = re.search(r'今天|今日|明天|后天|周[一二三四五六日天]|\d{1,2}[:：点时月日]|第?\d{1,2}周|(?:考试|补考)(?:日程|安排)|延期|改期|取消|推迟|调整', body)
     resource = re.search(r'资料|课件|教程|文档|附件|指南|模板|学习路线|解决方法|解决步骤|解决方案', body)
     concrete = re.search(r'https?://|分享|下载|附件|\.(?:pdf|docx|zip|md)|包含|使用|选择|执行|步骤|先.{1,20}再', body, re.I)
     if action and directive and not personal_report:
