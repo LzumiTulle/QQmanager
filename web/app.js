@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const labels = {home:'主页',timetable:'我的课表',insights:'事项',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
+const labels = {home:'今天',timetable:'我的课表',insights:'事项',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
 let nativeState = null;
 let settingsTab='model', connectionTab='qq', sortOrder='latest', topicFilter='全部';
 let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignature='', groupSelecting=false;
@@ -32,9 +32,11 @@ function notice(message='') {$('#notice').hidden=!message;$('#notice').textConte
 async function refresh(renderPage=true) {
   const sequence=++loadSequence;
   try {
-    const query=$('#search').value, group=groupFilter;
+    const searchEnabled=['insights','files','tasks','messages'].includes(view);
+    const rawQuery=$('#search').value, rawGroup=groupFilter;
+    const query=searchEnabled?rawQuery:'', group=searchEnabled?rawGroup:'';
     const [data,calendar]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams(plannerDate?{date:plannerDate}:{}))]);
-    if(sequence!==loadSequence||group!==groupFilter||query!==$('#search').value)return;
+    if(sequence!==loadSequence||rawGroup!==groupFilter||rawQuery!==$('#search').value)return;
     state=data;plannerState=calendar;notice();
     for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
     $('#nav-insights').textContent=state.counts.matters;
@@ -71,8 +73,9 @@ function setView(next){
 function render(){
   if(!state)return;
   document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===view));
+  document.body.dataset.view=view;
   $('#page-title').textContent=labels[view];
-  $('#searchbar').hidden=['connections','settings','timetable'].includes(view);
+  $('#searchbar').hidden=['home','connections','settings','timetable'].includes(view);
   $('#search').placeholder=({home:'搜索事项或相关消息',insights:'搜索事项或相关消息',files:'搜索文件名或正文',tasks:'搜索待办',messages:'搜索原始消息'})[view]||'搜索';
   $('#import-button').hidden=!['files','messages'].includes(view);
   $('#import-button').textContent=view==='files'?'导入文件':'导入记录';
@@ -147,7 +150,7 @@ function nativePanel(){
   const d=ensureNativeDraft();
   const incompatible=!hooked&&Object.keys(signals).some(key=>key.startsWith('unwritable:'));
   const phase=!n.enabled?'客户端插件已暂停':!n.connected?'等待 QQ 客户端插件连接':incompatible?'当前 QQ 接口不兼容，消息尚未开始收集':!hooked?'插件已连接，正在验证消息监听':!n.account_matches?'监听已就绪，等待新消息确认绑定账号':'客户端消息监听已连接';
-  return `<section id="native-panel" class="panel"><div class="section-title"><h2>收集群聊</h2><span id="native-group-count" class="badge">已选 ${d.selected.size} 个群${d.dirty?' · 未保存':''}</span></div><div class="status-line"><span class="dot"></span>${phase}</div><p>勾选要收集的群，取消勾选或移除即可停止收集。保存后约 10 秒生效，已有记录保留。</p><input id="native-group-search" type="search" aria-label="搜索群聊" placeholder="搜索群名或群号" value="${esc(nativeGroupSearch)}"><div id="native-group-list" class="native-group-list">${nativeGroupRows()}</div><div class="inline-actions"><button type="button" data-action="native-refresh-groups">刷新 QQ 群列表</button><button type="button" data-action="native-clear-groups">取消全选</button><button type="button" class="primary" data-action="native-save-groups">保存群聊选择</button></div><p class="help">${n.groups_updated?`QQ 群列表已同步 ${n.groups_count} 个 · ${fmt(n.groups_updated)}。未勾选的群不收集消息。`:['0.1.1','0.1.2','0.1.3'].includes(n.version)?'完整列表需要更新 QQ 插件。请从应用菜单打开插件安装助手，更新后重启 QQ。':'等待 QQ 同步群列表。请保持 QQ 登录，也可点击刷新。'}</p><details ${d.account?'':'open'}><summary>账号与备用添加方式</summary><button type="button" data-action="native-add-group">按群号添加</button><p>使用你正常登录的 QQ，无需重复登录。QQ 需保持运行；离线历史不自动补齐。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(d.account)}" required></label><button type="submit">保存绑定账号</button></form><p>本次保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 最近心跳 ${fmt(n.last_seen)}</p><small>客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}</details><div class="inline-actions"><button data-action="native-toggle" ${state.settings.bridge_groups.length?'':'disabled'}>${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
+  return `<section id="native-panel" class="panel"><div class="section-title"><h2>选择收集的群</h2><span id="native-group-count" class="badge">已选 ${d.selected.size} 个群${d.dirty?' · 未保存':''}</span></div><div class="status-line"><span class="dot"></span>${phase}</div><p class="connection-note">使用当前 QQ 客户端的轻量插件，无需 NapCat 或再次扫码登录。</p><p>勾选要收集的群，取消勾选或移除即可停止收集。保存后约 10 秒生效，已有记录保留。</p><input id="native-group-search" type="search" aria-label="搜索群聊" placeholder="搜索群名或群号" value="${esc(nativeGroupSearch)}"><div id="native-group-list" class="native-group-list">${nativeGroupRows()}</div><div class="inline-actions"><button type="button" data-action="native-refresh-groups">刷新 QQ 群列表</button><button type="button" data-action="native-clear-groups">取消全选</button><button type="button" class="primary" data-action="native-save-groups">保存群聊选择</button></div><p class="help">${n.groups_updated?`QQ 群列表已同步 ${n.groups_count} 个 · ${fmt(n.groups_updated)}。未勾选的群不收集消息。`:['0.1.1','0.1.2','0.1.3'].includes(n.version)?'完整列表需要更新 QQ 插件。请从应用菜单打开插件安装助手，更新后重启 QQ。':'等待 QQ 同步群列表。请保持 QQ 登录，也可点击刷新。'}</p><details ${d.account?'':'open'}><summary>账号与备用添加方式</summary><button type="button" data-action="native-add-group">按群号添加</button><p>使用你正常登录的 QQ，无需重复登录。QQ 需保持运行；离线历史不自动补齐。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(d.account)}" required></label><button type="submit">保存绑定账号</button></form><p>本次保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 最近心跳 ${fmt(n.last_seen)}</p><small>客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}</details><div class="inline-actions"><button data-action="native-toggle" ${state.settings.bridge_groups.length?'':'disabled'}>${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
 }
 function napcatPanel(){
   const c=connectorState;
@@ -244,7 +247,7 @@ async function handleAction(action,id){
     case 'save':await api('/api/insight',{id,status:i.status==='saved'?'new':'saved'});await refresh();if(modal.open)sourceDialog(state.insights.find(x=>x.id===id));return;
     case 'read':await api('/api/insight',{id,status:'read'});modal.close();break;
     case 'dismiss':await api('/api/insight',{id,status:i.status==='dismissed'?'new':'dismissed'});modal.close();break;
-    case 'file-detail':{const file=await api('/api/file/'+id);openModal(file.name,`${currentMatter?.attachments.some(a=>a.file_id===id)?`<button data-plan="matter" data-id="${currentMatter.id}">‹ 返回事项</button>`:''}<p class="help">${esc(file.parse_status)} · ${bytes(file.size)}</p>${file.kind==='image'?`<a href="/api/preview/${id}" target="_blank" rel="noopener"><img class="attachment-image" src="/api/preview/${id}" alt="${esc(file.name)}"></a>`:''}<div class="source-text">${esc(file.body?.slice(0,100000)||'暂未提取到文字。请查看原图或下载原文件。')}</div>${file.body?.length>100000?'<p class="help">仅预览前 10 万字；搜索覆盖提取全文。</p>':''}<div class="modal-actions">${/\.pdf$/i.test(file.name)?`<a href="/api/preview/${id}" target="_blank" rel="noopener">打开 PDF</a>`:''}<a class="primary" href="/api/download/${id}" download>下载原文件</a></div>`,true);return;}
+    case 'file-detail':{const file=await api('/api/file/'+id);openModal(file.name,`${currentMatter?.attachments.some(a=>a.file_id===id)?`<button data-plan="matter" data-tab="files" data-id="${currentMatter.id}">‹ 返回事项</button>`:''}<p class="help">${esc(file.parse_status)} · ${bytes(file.size)}</p>${file.kind==='image'?`<a href="/api/preview/${id}" target="_blank" rel="noopener"><img class="attachment-image" src="/api/preview/${id}" alt="${esc(file.name)}"></a>`:''}<div class="source-text">${esc(file.body?.slice(0,100000)||'暂未提取到文字。请查看原图或下载原文件。')}</div>${file.body?.length>100000?'<p class="help">仅预览前 10 万字；搜索覆盖提取全文。</p>':''}<div class="modal-actions">${/\.pdf$/i.test(file.name)?`<a href="/api/preview/${id}" target="_blank" rel="noopener">打开 PDF</a>`:''}<a class="primary" href="/api/download/${id}" download>下载原文件</a></div>`,true);return;}
     case 'media-refresh':{const r=await api('/api/native/media/refresh',{});toast(`已请求补取 ${r.messages} 条旧消息附件；需要 QQ 保持登录及插件 0.1.5`);return;}
     case 'attachment-retry':await api('/api/attachment/retry',{id});toast('已安排重新识别');return;
     case 'watch-toggle':{const w=state.watches.find(x=>x.id===id);await api('/api/watch-toggle',{id,enabled:!w.enabled});break;}

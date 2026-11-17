@@ -10,20 +10,19 @@
   <aside class="sidebar">
     <a href="#home" class="brand"><span class="brand-icon">Q</span>QQmanager</a>
     <nav aria-label="主导航">
-      <button data-view="home"><span aria-hidden="true">⌂</span>主页</button>
+      <button data-view="home"><span aria-hidden="true">⌂</span>今天</button>
       <button data-view="timetable"><span aria-hidden="true">▦</span>课表</button>
       <button data-view="insights"><span aria-hidden="true">≡</span>事项<i id="nav-insights">0</i></button>
       <button data-view="files"><span aria-hidden="true">▤</span>文件<i id="nav-files">0</i></button>
       <button data-view="tasks"><span aria-hidden="true">✓</span>待办<i id="nav-tasks">0</i></button>
-      <button data-view="messages"><span aria-hidden="true">▦</span>记录</button>
     </nav>
     <div class="sidebar-bottom">
-      <nav aria-label="管理"><button data-view="connections"><span aria-hidden="true">⇄</span>接入</button><button data-view="settings"><span aria-hidden="true">⚙</span>设置</button></nav>
-      <div class="theme-switch" role="group" aria-label="外观"><button data-theme-choice="light" aria-pressed="true">浅色</button><button data-theme-choice="dark" aria-pressed="false">深色</button></div>
+      <nav aria-label="管理"><button data-view="messages"><span aria-hidden="true">▤</span>原始记录</button><button data-view="connections"><span aria-hidden="true">⇄</span>接入</button><button data-view="settings"><span aria-hidden="true">⚙</span>设置</button></nav>
+      <button id="analysis-status" class="status-button sidebar-status" data-view="settings">本地识别</button><div class="theme-switch" role="group" aria-label="外观"><button data-theme-choice="light" aria-pressed="true">浅色</button><button data-theme-choice="dark" aria-pressed="false">深色</button></div>
     </div>
   </aside>
   <main>
-    <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="analysis-status" class="status-button" data-view="settings">本地识别</button><button id="notifications-button" aria-label="查看提醒">提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden>导入记录</button><button class="primary" id="new-task-button" hidden>新建待办</button></div></header>
+    <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="notifications-button" aria-label="查看提醒">提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden>导入记录</button><button class="primary" id="new-task-button" hidden>新建待办</button></div></header>
     <div class="page">
       <div id="notice" role="status" hidden></div>
       <div class="searchbar" id="searchbar"><span aria-hidden="true">⌕</span><input id="search" placeholder="搜索重要信息" aria-label="搜索内容"><kbd>⌘ K</kbd><div class="group-filter-wrap" id="group-filter-wrap"><button id="group-filter" aria-label="筛选群聊" aria-haspopup="listbox" aria-expanded="false" aria-controls="group-options">全部群聊 ▾</button><div id="group-options" class="group-options" role="listbox" aria-label="群聊列表" hidden></div></div></div>
