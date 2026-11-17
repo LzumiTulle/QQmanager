@@ -46,3 +46,62 @@ button:focus-visible,a:focus-visible,summary:focus-visible{outline:2px solid var
 .signal-dot{display:inline-block;flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--event-accent);vertical-align:middle;margin-right:8px}.overview-toolbar h2{font-size:24px}.overview-stats button{border-top:2px solid var(--event-accent)}.overview-stats button:last-child{border-top:2px solid var(--event-accent)}.overview-stats span{display:block;line-height:1.7}.overview-stats small{display:block;margin-top:3px}.overview-block{margin:28px 0 0;padding:22px 0 0;border-top:1px solid var(--line)}.overview-block h2{font-size:15px;margin:0}.schedule-block{margin-top:0;border-top:0;padding-top:0}.period-navigation>div>p{margin:7px 0 0;font-size:12px;color:var(--muted)}.event-legend{display:flex;gap:20px;font-size:11px;color:var(--muted);margin:18px 0}.event-days{border-top:1px solid var(--line)}.event-day{display:grid;grid-template-columns:100px minmax(0,1fr);gap:20px;padding:20px 0;border-bottom:1px solid var(--line)}.event-date{padding-top:12px;display:flex;flex-direction:column;gap:7px;color:var(--muted)}.event-date strong{font-size:17px;color:var(--ink);font-variant-numeric:tabular-nums}.event-date span{font-size:12px}.event-day.is-today .event-date strong{color:var(--accent-change)}.event-day-content{min-width:0}.event-week .event-day-content{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}.event-row{display:flex;gap:14px;align-items:stretch;width:100%;text-align:left;padding:16px;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin-bottom:10px;min-width:0}.event-marker{width:3px;flex:0 0 3px;background:var(--event-accent);border-radius:3px}.event-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}.event-top{display:flex;gap:12px;align-items:center;font-size:11px;color:var(--muted)}.event-kind{color:var(--event-accent)}.event-body strong{font-size:14px;font-weight:550;line-height:1.65;overflow-wrap:anywhere}.event-body small{font-size:11px;line-height:1.7;overflow-wrap:anywhere}.event-arrow{align-self:center;color:var(--muted)}.day-clear{color:var(--muted);font-size:12px;margin:0;padding:18px 0}.receipt-columns{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:28px;margin-top:22px}.receipt-columns>div+div{padding-left:28px;border-left:1px solid var(--line)}.receipt-columns h3{font-size:13px;margin-bottom:14px}.receipt-columns h3 span{font-weight:400;color:var(--muted);margin-left:8px}.receipt-group{display:flex;justify-content:space-between;gap:20px;padding:10px 0;border-bottom:1px dashed var(--line);font-size:12px}.receipt-group>span:last-child{white-space:nowrap}.receipt-preview{display:flex;flex-direction:column;gap:8px;text-align:left;width:100%;padding:14px 0;border:0;border-bottom:1px dashed var(--line);border-radius:0;background:transparent;min-width:0}.receipt-preview>span{font-size:12px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}.receipt-preview small{font-size:11px}.receipt-list .receipt-preview{padding:18px 0}.date-dots{display:flex;gap:4px}.date-dots .signal-dot{margin:0;width:5px;height:5px}.exam-label{color:var(--accent-exam);font-size:12px;display:block;margin-bottom:14px}.exam-facts{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:20px 0}.exam-facts>div{background:var(--surface);padding:15px;display:flex;flex-direction:column;gap:8px}.exam-facts strong{font-size:14px;line-height:1.5}.exam-course-marker{color:var(--accent-exam)!important}.exam-pending{font-size:12px;color:var(--muted);padding:12px 0}.upcoming-exams{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
 @media(max-width:1100px){.event-week .event-day-content{grid-template-columns:1fr}.receipt-columns{grid-template-columns:1fr}.receipt-columns>div+div{padding:20px 0 0;border-left:0;border-top:1px solid var(--line)}}
 @media(max-width:650px){.event-day{grid-template-columns:1fr;gap:10px;padding:16px 0}.event-date{padding:0;flex-direction:row;align-items:center;gap:12px}.event-date strong{font-size:15px}.event-row{padding:12px}.overview-stats small{display:none}.overview-stats .signal-dot{margin-right:4px;width:5px;height:5px}.event-legend{gap:12px}.upcoming-exams{grid-template-columns:1fr}.receipt-group{gap:8px}.exam-facts{grid-template-columns:1fr}}
+
+/* One date anchor, one reading column. Keep the overview light in system WebViews. */
+body[data-view=home] .page { max-width:1120px; padding-top:32px; }
+.home-overview { max-width:960px; margin:0 auto; }
+.overview-date-header { display:flex; justify-content:space-between; align-items:flex-start; gap:24px; margin-bottom:24px; }
+.overview-date-heading { min-width:0; }
+.overview-date-heading h2 { font-size:36px; line-height:1.25; letter-spacing:-1px; font-weight:650; margin:0 0 10px; font-variant-numeric:tabular-nums; }
+.overview-date-heading p { font-size:12px; line-height:1.6; color:var(--muted); margin:0; }
+.overview-date-controls { display:flex; flex-direction:column; align-items:flex-end; gap:12px; flex-shrink:0; }
+.overview-date-controls .scope-switch { padding:3px; }
+.overview-date-controls .scope-switch button { padding:7px 15px; font-size:12px; }
+.overview-date-controls .calendar-nav button { min-height:28px; }
+.overview-summary { display:flex; gap:32px; padding:0 0 24px; border-bottom:1px solid var(--line); }
+.overview-summary button { display:flex; align-items:baseline; gap:9px; border:0; background:transparent; padding:6px 2px; border-radius:4px; }
+.overview-summary button:hover { background:var(--hover); }
+.overview-summary strong { font-size:30px; line-height:1; font-weight:600; font-variant-numeric:tabular-nums; }
+.overview-summary span { font-size:12px; color:var(--muted); }
+.home-overview .overview-block { margin:26px 0 0; padding:0; border:0; }
+.home-overview .section-title { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; border-bottom:1px solid var(--line); padding-bottom:10px; margin:0; }
+.home-overview .section-title h2 { font-size:14px; font-weight:600; margin:0; }
+.home-overview .section-title small,.home-overview .section-title .text-link { font-size:11px; }
+.home-overview .section-count { color:var(--muted); font-size:11px; font-weight:400; margin-left:6px; }
+.home-overview .event-row { display:flex; gap:13px; width:100%; padding:16px 6px; margin:0; border:0; border-bottom:1px solid var(--line); border-radius:0; background:transparent; align-items:flex-start; }
+.home-overview .event-row:hover { background:var(--surface); }
+.home-overview .event-marker { width:7px; height:7px; flex:0 0 7px; border-radius:50%; margin-top:7px; }
+.home-overview .event-body { gap:5px; }
+.home-overview .event-body strong { font-size:15px; line-height:1.6; font-weight:500; }
+.home-overview .event-top { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; font-size:12px; line-height:1.7; }
+.home-overview .event-top time { font-variant-numeric:tabular-nums; }
+.home-overview .event-meta { color:var(--muted); overflow-wrap:anywhere; }
+.home-overview .event-arrow { align-self:center; font-size:17px; }
+.home-overview .event-days { border:0; }
+.home-overview .event-day { display:block; padding:16px 0 0; border:0; }
+.home-overview .event-date { display:block; padding:0 6px; margin:0 0 3px; font-size:12px; font-weight:500; line-height:1.6; color:var(--muted); }
+.home-overview .event-day.is-today .event-date { color:var(--accent-change); }
+.home-overview .event-week .event-day-content,.home-overview .upcoming-exams { display:block; margin:0; }
+.home-overview .day-clear { padding:18px 6px; font-size:12px; }
+.home-overview .receipt-caption { color:var(--muted); font-size:11px; line-height:1.7; margin:12px 6px 0; }
+.home-overview .exam-pending { padding:14px 6px; border-bottom:1px solid var(--line); }
+.home-overview .event-month { margin-top:16px; }
+@media(max-width:850px) {
+ .overview-date-header { flex-wrap:wrap; gap:18px; }
+ .overview-date-controls { flex-direction:row; align-items:center; justify-content:space-between; width:100%; }
+ .overview-date-heading h2 { font-size:32px; }
+ .overview-summary { gap:28px; }
+}
+@media(max-width:500px) {
+ body[data-view=home] .page { padding-top:24px; }
+ .overview-date-heading h2 { font-size:28px; letter-spacing:-.5px; }
+ .overview-summary { justify-content:space-between; gap:10px; }
+ .overview-summary button { flex-direction:column; gap:7px; align-items:flex-start; }
+ .overview-summary strong { font-size:28px; }
+ .overview-summary span { font-size:11px; }
+ .overview-date-controls .scope-switch button { padding:7px 10px; }
+ .overview-date-controls .calendar-nav { gap:4px; }
+ .overview-date-controls .calendar-nav button { font-size:10px; padding:6px 7px; }
+ .home-overview .event-body strong { font-size:14px; }
+ .home-overview .event-top { font-size:11px; }
+}
