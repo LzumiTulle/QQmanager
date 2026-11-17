@@ -131,7 +131,14 @@ fn start_service(app: &tauri::AppHandle) -> Result<Arc<Service>, Box<dyn std::er
         }
         Err(e) if e.is_connect() => {
             fs::create_dir_all(&data)?;
-            let resources = app.path().resource_dir()?;
+            let resources = if cfg!(debug_assertions) {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .parent()
+                    .unwrap()
+                    .join("build")
+            } else {
+                app.path().resource_dir()?
+            };
             let exe = resources.join("backend").join(if cfg!(windows) {
                 "qqmanager-server.exe"
             } else {
@@ -225,9 +232,12 @@ fn native_menu(app: &tauri::AppHandle, s: &Arc<Service>) -> tauri::Result<Menu<t
     )
 }
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let autostart = tauri_plugin_autostart::Builder::new().args(["--background"]);
+    #[cfg(target_os = "macos")]
+    let autostart = autostart.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
     let app=tauri::Builder::default()
  .plugin(tauri_plugin_single_instance::init(|app,_,_|show(app)))
- .plugin(tauri_plugin_autostart::Builder::new().macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent).args(["--background"]).build())
+ .plugin(autostart.build())
  .plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_notification::init())
  .setup(|app|{
   let handle=app.handle().clone();let service=match start_service(&handle){Ok(s)=>s,Err(e)=>{app.dialog().message(e.to_string()).title("QQmanager 启动失败").blocking_show();return Err(e);}};
@@ -245,9 +255,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     .on_page_load(move|_,payload|{if matches!(payload.event(),tauri::webview::PageLoadEvent::Finished)&&local(payload.url())&&payload.url().path()=="/"{let _=fs::write(runtime.data.join("desktop-runtime.json"),serde_json::to_vec(&json!({"version":"0.4.0","webview_loaded":true,"renderer":if cfg!(windows){"WebView2"}else{"WebKit"}})).unwrap());}})
     .on_navigation(move|u|{if local(u){true}else{if external(u){let _=nav.opener().open_url(u.to_string(),None::<&str>);}false}})
     .on_new_window(move|u,_|{if local(&u)||external(&u){let _=popup.opener().open_url(u.to_string(),None::<&str>);}tauri::webview::NewWindowResponse::Deny})
-    .on_download(move|_,event|{match event{
+    .on_download(move|view,event|{match event{
       tauri::webview::DownloadEvent::Requested{url,destination}=>{if !local(&url){return false;}if let Ok(dir)=download.path().download_dir(){let name=destination.file_name().unwrap_or_default().to_owned();let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();*destination=dir.join(format!("QQmanager-{stamp}-{}",name.to_string_lossy()));true}else{false}},
-      tauri::webview::DownloadEvent::Finished{success,path,..}=>{if success{if let Some(p)=path{download.dialog().message(format!("文件已保存到：{}",p.display())).title("下载完成").show(|_|{});}}else{error(&download,"下载失败，请重试。");}true},_=>false}})
+      tauri::webview::DownloadEvent::Finished{success,path,..}=>{let message=if success{format!("文件已保存到下载文件夹：{}",path.as_ref().and_then(|p|p.file_name()).unwrap_or_default().to_string_lossy())}else{"下载失败，请重试。".to_string()};let script=format!("if(typeof toast === 'function') toast({});",serde_json::to_string(&message).unwrap());let view=view.clone();thread::spawn(move||{let _=view.eval(&script);});true},_=>false}})
     .build()?;
   let close=window.clone();window.on_window_event(move|e|{if let tauri::WindowEvent::CloseRequested{api,..}=e{api.prevent_close();let _=close.hide();}});
   if !std::env::args().any(|a|a=="--background"){window.show()?;}
