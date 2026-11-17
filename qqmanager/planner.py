@@ -37,7 +37,7 @@ def validate_config(body):
             assert datetime.strptime(start,'%H:%M')<datetime.strptime(end,'%H:%M')
     except (ValueError,TypeError,KeyError,AssertionError):
         raise ValueError('请填写有效的校历日期、周数和五个大节的起止时间') from None
-    return dict(name=str(body.get('name') or '我的学期')[:100],anchor_date=d.isoformat(),anchor_week=w,total_weeks=total,blocks=blocks,configured=True)
+    return dict(name=str(body.get('name') or '我的学期')[:100],class_name=str(body.get('class_name') or '')[:80],anchor_date=d.isoformat(),anchor_week=w,total_weeks=total,blocks=blocks,configured=True)
 
 def week_one(c):
     d=date.fromisoformat(c['anchor_date'])
@@ -118,7 +118,8 @@ def snapshot(s,day=None,span='week'):
             x['time_note']='按大节显示' if x['start_period']%2==0 or x['end_period']%2==1 else ''
             x['conflict']=any((y['id'],y['source_date'])!=(x['id'],x['source_date']) and y['start_period']<=x['end_period'] and x['start_period']<=y['end_period'] for y in lessons)
         days.append(dict(date=current.isoformat(),weekday=current.weekday()+1,courses=sorted(lessons,key=lambda x:x['start_period'])))
-    return dict(config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=list_changes(s),
+    from .exams import snapshot as exam_snapshot
+    return dict(exams=exam_snapshot(s),config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=list_changes(s),
                 unscheduled=[x for x in courses if x['enabled'] and x['weekday']==0 and w in x['weeks']])
 
 def table_columns(layout):
@@ -220,7 +221,10 @@ def apply_import(s,body):
         row=found[0]
         if row['applied']:return {'added':0,'already_applied':True}
         result=json.loads(row['result']);added=0
-        if row['kind']=='calendar':save_config(s,body.get('calendar') or result['calendar'])
+        if row['kind']=='calendar':
+            calendar=dict(body.get('calendar') or result['calendar'])
+            calendar['class_name']=calendar.get('class_name') or config(s).get('class_name','')
+            save_config(s,calendar)
         else:
             for c in result['courses']:
                 key=hashlib.sha256(json.dumps(c,sort_keys=True,ensure_ascii=False).encode()).hexdigest()

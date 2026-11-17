@@ -57,6 +57,13 @@ def workers(store, stop):
             except Exception:pass
             stop.wait(15)
     threading.Thread(target=reschedule,daemon=True).start()
+    def exams():
+        from .exams import recognize_step
+        while not stop.is_set():
+            try:recognize_step(store)
+            except Exception:pass
+            stop.wait(20)
+    threading.Thread(target=exams,daemon=True).start()
     def attachments():
         from .media import step
         while not stop.is_set():
@@ -139,6 +146,15 @@ def make_server(store, port=8765, connector=None):
                 elif url.path == '/api/state':
                     q = parse_qs(url.query)
                     self.send(store.snapshot(q.get('q', [''])[0], q.get('group', [''])[0]))
+                elif url.path == '/api/overview':
+                    from .overview import snapshot
+                    params=parse_qs(url.query)
+                    self.send(snapshot(store,params.get('date',[None])[0],params.get('span',['day'])[0],params.get('offset',[0])[0]))
+                elif url.path.startswith('/api/message/'):
+                    from .media import for_message
+                    mid=int(url.path.rsplit('/',1)[1]);rows=store.query('SELECT * FROM messages WHERE id=?',(mid,))
+                    if not rows:self.send({'error':'消息不存在'},404);return
+                    self.send(dict(rows[0],attachments=for_message(store,mid)))
                 elif url.path == '/api/connector':
                     self.send(dict(connector.snapshot(), enabled=store.setting('ws_enabled'), url=store.setting('ws_url'),
                                    configured=bool(store.setting('ws_token')), selected=store.setting('bridge_groups'),

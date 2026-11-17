@@ -48,7 +48,7 @@ def source(s,e):
         job=s.query('SELECT group_id,account FROM analysis_jobs WHERE message_id=?',(m['id'],))
         if not job or not Analyzer(s).allowed(job[0]):continue
         messages.append(dict(id=m['id'],sent_at=m['sent_at'],content=analysis_source(s,m)['content'][:14000]))
-    return dict(matter_id=e['id'],title=e['title'],group_name=e['group_name'],messages=sorted(messages,key=lambda m:m['id']),calendar=planner.config(s))
+    return dict(matter_id=e['id'],title=e['title'],group_name=e['group_name'],messages=sorted(messages,key=lambda m:m['id']),calendar={k:v for k,v in planner.config(s).items() if k!='class_name'})
 
 def source_key(src):
     # Semantic grouping may rename a matter without changing its underlying evidence.
@@ -201,7 +201,7 @@ def list_changes(s):
         if row['state']=='applied':
             changes=[x for x in changes if active.get((x['course_id'],x['source_date']))==row['id']]
             if not changes:continue
-        result.append(dict(id=row['id'],matter_id=row['matter_id'],title=src['title'],group_name=src['group_name'],state=row['state'],error=row['error'],dates=sorted({x[k] for x in changes for k in ('from_date','to_date') if x.get(k)}),from_dates=sorted({x['from_date'] for x in changes if x.get('from_date')}),to_dates=sorted({x['to_date'] for x in changes if x.get('to_date')}),count=len(changes),message_ids=[m['id'] for m in src['messages']]))
+        result.append(dict(id=row['id'],matter_id=row['matter_id'],title=src['title'],group_name=src['group_name'],state=row['state'],error=row['error'],dates=sorted({x[k] for x in changes for k in ('from_date','to_date') if x.get(k)}),from_dates=sorted({x['from_date'] for x in changes if x.get('from_date')}),to_dates=sorted({x['to_date'] for x in changes if x.get('to_date')}),count=len(changes),moves=[{k:x.get(k) for k in ('course','from_date','to_date','from_start_period','from_end_period','to_start_period','to_end_period')} for x in changes],message_ids=[m['id'] for m in src['messages']]))
     return result
 
 def apply(s,body):

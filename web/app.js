@@ -8,6 +8,7 @@ let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignat
 const canonicalView = name => labels[name]?name:'home';
 function applyTheme(theme){document.documentElement.dataset.theme=theme;localStorage.setItem('qqm-theme',theme);document.querySelectorAll('[data-theme-choice]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme));});}
 applyTheme(localStorage.getItem('qqm-theme')==='dark'?'dark':'light');
+let overviewState = null;
 let connectorState = null, connectorSignature = '';
 let csrf = '', state = null, view = 'home', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
 const modal = $('#modal');
@@ -35,9 +36,9 @@ async function refresh(renderPage=true) {
     const searchEnabled=['insights','files','tasks','messages'].includes(view);
     const rawQuery=$('#search').value, rawGroup=groupFilter;
     const query=searchEnabled?rawQuery:'', group=searchEnabled?rawGroup:'';
-    const [data,calendar]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams({...plannerDate?{date:plannerDate}:{},span:view==='home'&&homeScope==='month'?'month':'week'}))]);
+    const [data,calendar,overview]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams({...plannerDate?{date:plannerDate}:{},span:view==='home'&&homeScope==='month'?'month':'week'})),view==='home'?api('/api/overview?'+new URLSearchParams({...plannerDay||plannerDate?{date:plannerDay||plannerDate}:{},span:homeScope})):Promise.resolve(null)]);
     if(sequence!==loadSequence||rawGroup!==groupFilter||rawQuery!==$('#search').value)return;
-    state=data;plannerState=calendar;notice();
+    state=data;plannerState=calendar;overviewState=overview;notice();
     const validGroups=view==='messages'?(state.history_groups||state.groups):state.groups;
     if(groupFilter&&!validGroups.includes(groupFilter)){groupFilter='';localStorage.removeItem('qqm-group-filter');groupOptionsSignature='';return refresh(renderPage);}
     for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
@@ -240,7 +241,7 @@ async function handleAction(action,id){
     case 'import':importDialog();return;
     case 'import-files':importDialog('file');return;
     case 'source':sourceDialog(i);return;
-    case 'message-detail':sourceDialog(state.messages.find(x=>x.id===id));return;
+    case 'message-detail':sourceDialog(await api('/api/message/'+id));return;
     case 'task-source':sourceDialog(t);return;
     case 'new-task':taskDialog();return;
     case 'task-from':taskDialog(i);return;

@@ -75,11 +75,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-      - name: Create draft release
+      - name: Create or update release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: |
           find artifacts -name SHA256SUMS.txt -exec cat {} + > SHA256SUMS.txt
-          gh release create "$TAG" --draft --prerelease --title "QQmanager $TAG 试用版" --notes "macOS / Windows 桌面试用版。未配置商业代码签名；Windows QQ 插件兼容性尚未实测。请阅读 README 和平台限制。" $(find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \)) SHA256SUMS.txt
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" $(find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \)) SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" --draft --prerelease --title "QQmanager $TAG 试用版" --notes "macOS / Windows 桌面试用版。未配置商业代码签名；Windows QQ 插件兼容性尚未实测。请阅读 README 和平台限制。" $(find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \)) SHA256SUMS.txt
+          fi
