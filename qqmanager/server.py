@@ -147,7 +147,8 @@ def make_server(store, port=8765, connector=None):
                     self.send(native.snapshot())
                 elif url.path == '/api/planner':
                     from .planner import snapshot
-                    self.send(snapshot(store,parse_qs(url.query).get('date',[None])[0]))
+                    params=parse_qs(url.query)
+                    self.send(snapshot(store,params.get('date',[None])[0],params.get('span',['week'])[0]))
                 elif url.path.startswith('/api/planner/change/'):
                     from .reschedule import review
                     self.send(review(store,int(url.path.rsplit('/',1)[1])))
@@ -178,7 +179,7 @@ def make_server(store, port=8765, connector=None):
                         return
                     row = rows[0]
                     self.send((store.blobs / row['digest']).read_bytes(), content_type='application/octet-stream', headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(row['name'])})
-                elif url.path in ('/', '/app.js', '/filter-model.js', '/planner.js', '/style.css'):
+                elif url.path in ('/', '/app.js', '/filter-model.js', '/planner-model.js', '/planner.js', '/style.css'):
                     file = ROOT / 'web' / ('index.html' if url.path == '/' else url.path[1:])
                     self.send(file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] + '; charset=utf-8')
                 else:

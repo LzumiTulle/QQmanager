@@ -7,6 +7,7 @@ dist/
 node_modules/
 build/
 release/
+src-tauri/target/
 *.spec
 .env
 .env.*

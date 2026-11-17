@@ -21,7 +21,7 @@ Mac 日常入口是“应用程序 → QQmanager”，可以将应用拖到 Dock
 
 菜单中的“登录系统后后台启动”默认开启，可关闭。开机启动指**当前用户登录系统后**，不在未登录时运行，不自动登录 QQ。第一次将 Mac 应用从 DMG 拖入“应用程序”后再打开；不要长期从 DMG 或临时解压目录启动。
 
-主页显示一周日历与近期事项。“事项”页按考试、学业、通知等分类，每类预览 3 项。考试按同群、同学期、同一周合并；后续通知、图片和文件放进原事项，收到新消息后标记“有更新”。详情保留最新补充、附件、逐条原文和变更记录；可手动合并、拆开、收藏、已读或添加待办。其他事项使用本地规则与已启用模型整理，只发送授权群的事项标题，不跨群自动合并。群聊、搜索、阅读状态可以组合筛选，群选择会记住。
+概览提供今天、本周、本月切换，大数字汇总课程、待办和待确认调课；课表按时间轴对齐，空课留白。“事项”页按考试、学业、通知等分类，每类预览 3 项。考试按同群、同学期、同一周合并；后续通知、图片和文件放进原事项，收到新消息后标记“有更新”。详情保留最新补充、附件、逐条原文和变更记录；可手动合并、拆开、收藏、已读或添加待办。其他事项使用本地规则与已启用模型整理，只发送授权群的事项标题，不跨群自动合并。群聊、搜索、阅读状态可以组合筛选，群选择会记住。
 
 ## 个人课表与校历
 
@@ -35,7 +35,7 @@ Mac 日常入口是“应用程序 → QQmanager”，可以将应用拖到 Dock
 
 ## 数据与旧版兼容
 
-新安装默认使用 Electron 用户数据目录下的 `data`（Mac 通常为 `~/Library/Application Support/QQmanager/data`，Windows 为 `%APPDATA%/QQmanager/data`）。可以从应用菜单打开实际数据文件夹。
+新安装默认使用兼容旧版的用户数据目录下的 `data`（Mac 通常为 `~/Library/Application Support/QQmanager/data`，Windows 为 `%APPDATA%/QQmanager/data`）。可以从应用菜单打开实际数据文件夹。
 
 已有兼容 QQmanager 服务占用 8765 时，桌面版核对健康协议并复用它，记住其数据目录，不复制或重置聊天、群选择或密钥。退出桌面版不会停止外部旧服务。若要迁移到完全由桌面版管理，先确认应用已识别原数据目录，再停用旧 LaunchAgent；下次打开桌面版会使用原目录启动内置服务。
 
@@ -51,20 +51,20 @@ Windows 安装器只安装 QQmanager，不修改 QQ。QQ 自动接入需兼容�
 
 ## 构建
 
-依赖 Node.js 24、Python 3.11+（源码最低 3.9）；`npm ci` 安装锁定的 Electron 与 electron-builder，`pip install -r requirements-build.txt` 安装后端构建依赖。
+依赖 Node.js 24、Rust stable、Python 3.12（源码最低 3.9）；`npm ci` 安装锁定的 Tauri CLI，`pip install -r requirements-build.txt` 安装后端构建依赖。
 
 执行 `python scripts/desktop/build_backend.py` 会把服务和网页冻结到 `build/backend`，再执行 `python scripts/desktop/smoke_backend.py` 验证真实打包程序。Mac 还需 `python scripts/build_mac_installer.py`（需要 Xcode Command Line Tools）。
 
-- Mac：`npm run dist:mac` → `release/*.dmg` / `*.zip`
+- Mac：`npm run dist:mac` → `release/*.dmg`
 - Windows：`npm run dist:win` → `release/*.exe`（当前用户 NSIS 一键安装）
 
 必须在目标 OS / CPU 上打包 Python 后端；GitHub Actions 分别提供 macOS arm64、macOS x64、Windows x64 构建。Windows QQ 自动接入不属于安装包 smoke test 的覆盖范围。
 
 ## 发布与签名
 
-首次公开版本采用试用版发布。当前构建没有 Apple Developer ID、公证或 Windows 商业签名，可能出现 Gatekeeper / SmartScreen 来源提示；用户自行核对仓库和 SHA-256，不能要求关闭系统保护。正式广泛分发前，维护者应添加平台证书并调整 electron-builder 签名、公证配置。
+首次公开版本采用试用版发布。当前构建没有 Apple Developer ID、公证或 Windows 商业签名，可能出现 Gatekeeper / SmartScreen 来源提示；用户自行核对仓库和 SHA-256，不能要求关闭系统保护。正式广泛分发前，维护者应添加平台证书并调整 Tauri 签名、公证配置。
 
-构建只从明确的源码目录加入文件，不包括 `data`、`.venv`、QQ、容器会话或本机设置。发布前执行 `scripts/desktop/audit_release.py` 和自动化测试。依赖的许可证需随构建产物保留；Electron 自带第三方许可证文件不得删除。
+构建只从明确的源码目录加入文件，不包括 `data`、`.venv`、QQ、容器会话或本机设置。发布前执行 `scripts/desktop/audit_release.py` 和自动化测试。依赖的许可证需随构建产物保留。Tauri 使用 MIT/Apache-2.0 许可，见上游项目。
 
 ## 调课与个人课表
 
@@ -74,12 +74,24 @@ Windows 安装器只安装 QQmanager，不修改 QQ。QQ 自动接入需兼容�
 
 模型接收已授权群的相关通知文字和校历日期、作息，用于解释相对日期和教学周；个人课程匹配与冲突检查在本机执行。识别本身不会修改课表。支持已有课程的日期、节次和教室移动；不完整的停课、补课或考试通知不会自动变成课表变更。
 
-## 界面分工（0.3.2）
+## 界面分工（0.4.0）
 
-- 今天：主栏为所选日期的课程与定时待办，侧栏为小日历、待确认调课及本周事项。调课在这里仅出现一次。
+- 概览：今天、本周、本月切换，大数字展示课程、待办、待确认调课，点击日历日期查看当天详情。
 - 课表：浏览完整一周；课程增删、停用、校历与作息放在“管理课程与校历”中。
 - 事项：按分类检索整理后的事项；详情用概览、附件、原文三个标签分开显示。
 - 文件、待办：各自检索和管理。原始记录、接入和设置放在导航下方。
 - 页面支持窄屏布局；这不代表已提供手机服务或开放局域网。当前后端仍只监听本机回环地址。
 
 当前 Mac 接入使用 QQmanager 自己的轻量客户端插件，NapCat 是可选的旧适配方式，不是安装包依赖。部署边界和 REA 验证见 [轻量化与移动端边界](LIGHTWEIGHT.md)。
+
+## 0.4.0 轻量外壳与升级
+
+外壳改为 Tauri 2，Mac 使用系统 WebKit，Windows 10/11 x64 使用 WebView2。Windows 安装器内含 WebView2 引导器，运行时缺少时需要联网安装。不内置 Chromium/Electron。Python 数据服务、QQ 插件、模型分析与原文数据库保持原有协议。
+
+保留原桌面版数据目录：Mac 为 `~/Library/Application Support/QQmanager`，Windows 为 `%APPDATA%/QQmanager`。若本机已有 QQmanager 服务，则先验证身份并复用数据目录。升级前退出旧桌面程序；卸载旧外壳时不要删除应用数据。
+
+Windows 菜单的“安装 / 更新 QQ 消息插件”可选择已有 LiteLoaderQQNT 用户目录（包含 plugins 与 data），安装插件并写入配对配置。先在接入页保存 QQ 账号；不会自动安装加载器或更改 QQ 校验。加载器仍需对照用户 QQ 版本验证。
+
+常用群筛选只列当前收集名单；已移除群的旧消息仍在“原始记录”的历史群筛选中。
+
+Windows 构建另需 MSVC/C++ Build Tools，Mac 需 Xcode Command Line Tools。Windows CI 额外验证 NSIS 安装、WebView2 加载、后台启动、单实例及退出后的后端清理。

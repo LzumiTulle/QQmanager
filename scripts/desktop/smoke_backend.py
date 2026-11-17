@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory() as directory:
   assert health=={'app':'QQmanager','protocol':1}
   with urllib.request.urlopen(f'http://127.0.0.1:{port}/') as response:assert b'QQmanager' in response.read()
   with urllib.request.urlopen(f'http://127.0.0.1:{port}/api/state') as response:assert json.load(response)['messages']==[]
-  for asset in ('planner.js','filter-model.js'):
+  for asset in ('planner.js','planner-model.js','filter-model.js'):
    with urllib.request.urlopen(f'http://127.0.0.1:{port}/'+asset) as response:assert response.status==200
   class Provider(BaseHTTPRequestHandler):
    def log_message(self,*args):pass

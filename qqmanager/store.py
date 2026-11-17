@@ -334,10 +334,15 @@ class Store:
             counts['tasks'] = self.db.execute("SELECT count(*) FROM tasks WHERE status='open'").fetchone()[0]
             matters=list_matters(self,query,group)
             counts['matters']=len(list_matters(self))
+            history_groups = [x['group_name'] for x in self.query("SELECT group_name FROM messages UNION SELECT group_name FROM files WHERE group_name!='个人课表' ORDER BY group_name")]
+            from .native import NativeBridge
+            active_groups = [g['group_name'] for g in NativeBridge(self).group_catalog() if g['selected']]
+            # A configured collector owns the normal filter; historical records remain accessible.
+            groups = active_groups if self.setting('ws_account') else history_groups
             return {'matters':matters,'matter_error':self.setting('matter_error') or '', 'llm': status(self), 'counts': counts, 'insights': self.search('insights', query, group), 'files': self.search('files', query, group),
                     'messages': self.search('messages', query, group),
                     'tasks': self.query('SELECT t.*, m.group_name, m.content, m.sender, m.sent_at, i.evidence, i.model FROM tasks t LEFT JOIN insights i ON i.id=t.insight_id LEFT JOIN messages m ON m.id=i.message_id ORDER BY t.status DESC,t.remind_at IS NULL,t.remind_at,t.id DESC'),
-                    'groups': [x['group_name'] for x in self.query("SELECT group_name FROM messages UNION SELECT group_name FROM files WHERE group_name!='个人课表' ORDER BY group_name")],
+                    'groups': groups, 'history_groups': history_groups,
                     'notifications': self.query('SELECT * FROM notifications WHERE seen=0 ORDER BY id DESC'),
                     'watches': self.query('SELECT * FROM watches'),
                     'settings': {k: self.setting(k) for k in ('interests', 'bridge_enabled', 'bridge_groups', 'last_event', 'native_notifications', 'notification_error')}}

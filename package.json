@@ -1,96 +1,22 @@
 {
   "name": "qqmanager-desktop",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Local QQ group information assistant with evidence-backed AI analysis",
   "author": "QQmanager contributors",
   "license": "MIT",
   "private": true,
-  "main": "desktop/main.cjs",
   "repository": {
     "type": "git",
     "url": "https://github.com/LzumiTulle/QQmanager.git"
   },
   "scripts": {
-    "start": "electron .",
-    "test:desktop": "node --test tests/desktop.test.cjs",
-    "pack": "electron-builder --dir --publish never",
-    "dist:mac": "electron-builder --mac dmg zip --publish never",
-    "dist:win": "electron-builder --win nsis --x64 --publish never"
+    "start": "tauri dev",
+    "test:desktop": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "pack": "tauri build --no-bundle",
+    "dist:mac": "python3 scripts/desktop/package_tauri.py",
+    "dist:win": "python scripts/desktop/package_tauri.py"
   },
   "devDependencies": {
-    "electron": "45.3.2",
-    "electron-builder": "26.18.0"
-  },
-  "build": {
-    "appId": "io.github.lzumitulle.qqmanager",
-    "productName": "QQmanager",
-    "directories": {
-      "output": "release",
-      "buildResources": "build-resources"
-    },
-    "files": [
-      "desktop/**/*",
-      "package.json",
-      "LICENSE"
-    ],
-    "extraResources": [
-      {
-        "from": "build/backend",
-        "to": "backend"
-      },
-      {
-        "from": "plugins/qqmanager-native",
-        "to": "qq-plugin"
-      },
-      {
-        "from": "docs/DESKTOP.md",
-        "to": "DESKTOP.md"
-      }
-    ],
-    "asar": true,
-    "artifactName": "QQmanager-${version}-${os}-${arch}.${ext}",
-    "mac": {
-      "category": "public.app-category.productivity",
-      "target": [
-        "dmg",
-        "zip"
-      ],
-      "identity": "-",
-      "extraResources": [
-        {
-          "from": "dist/QQmanager Installer.app",
-          "to": "QQmanager Installer.app"
-        }
-      ]
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ],
-      "signExecutable": false
-    },
-    "nsis": {
-      "oneClick": true,
-      "perMachine": false,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "deleteAppDataOnUninstall": false
-    },
-    "dmg": {
-      "title": "QQmanager 0.3.2",
-      "contents": [
-        {
-          "x": 150,
-          "y": 180,
-          "type": "file"
-        },
-        {
-          "x": 440,
-          "y": 180,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ]
-    }
+    "@tauri-apps/cli": "2.12.5"
   }
 }

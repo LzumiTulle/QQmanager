@@ -99,19 +99,25 @@ def save_course(s,body):
             return int(body['id'])
         return s.db.execute('INSERT INTO courses(payload) VALUES (?)',(json.dumps(c,ensure_ascii=False),)).lastrowid
 
-def snapshot(s,day=None):
+def snapshot(s,day=None,span='week'):
     c=config(s); d=date.fromisoformat(day) if day else today();monday=d-timedelta(days=d.weekday());w=school_week(c,monday)
     from .reschedule import occurrences,list_changes
     courses=course_rows(s);days=[];effective=occurrences(s)
-    for n in range(7):
-        current=monday+timedelta(days=n)
+    start=monday
+    length=7
+    if span=='month':
+        import calendar
+        start=d.replace(day=1)
+        length=calendar.monthrange(d.year,d.month)[1]
+    for n in range(length):
+        current=start+timedelta(days=n)
         lessons=[dict(x) for x in effective if x['date']==current.isoformat()]
         for x in lessons:
             x['start_time']=c['blocks'][(x['start_period']-1)//2][0]
             x['end_time']=c['blocks'][(x['end_period']-1)//2][1]
             x['time_note']='按大节显示' if x['start_period']%2==0 or x['end_period']%2==1 else ''
             x['conflict']=any((y['id'],y['source_date'])!=(x['id'],x['source_date']) and y['start_period']<=x['end_period'] and x['start_period']<=y['end_period'] for y in lessons)
-        days.append(dict(date=current.isoformat(),weekday=n+1,courses=sorted(lessons,key=lambda x:x['start_period'])))
+        days.append(dict(date=current.isoformat(),weekday=current.weekday()+1,courses=sorted(lessons,key=lambda x:x['start_period'])))
     return dict(config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=list_changes(s),
                 unscheduled=[x for x in courses if x['enabled'] and x['weekday']==0 and w in x['weeks']])
 

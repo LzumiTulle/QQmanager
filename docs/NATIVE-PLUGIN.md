@@ -28,8 +28,8 @@ QQmanager 扩展运行在用户正常使用的 QQ 中，观察已经存在的消
 桌面安装器内置 QQmanager 的导入、搜索、模型分析与待办功能；QQ 消息自动接入另行配置。
 
 1. 确认 Windows QQ 已安装兼容且正常工作的 LiteLoaderQQNT。
-2. 将 `plugins/qqmanager-native` 安装到其插件目录。
-3. 在 QQmanager 保存账号和群号后，使用源码中的配对脚本，指定实际插件数据目录：
+2. 在 QQmanager 接入页先保存 QQ 账号。菜单选择“安装 / 更新 QQ 消息插件”，选择包含 plugins 和 data 的 LiteLoaderQQNT 用户目录，即可复制插件并配对（0.4.0 起）。不需要安装 Python。
+3. 源码用户也可选择手动安装插件并使用以下配对脚本：
 
 ```powershell
 python scripts/native/pair_windows.py --plugin-data "C:\YourLoader\data\qqmanager_native" --account "YourQQNumber" --groups "Group1,Group2"

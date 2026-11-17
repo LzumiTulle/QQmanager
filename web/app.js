@@ -1,7 +1,7 @@
 'use strict';
 const $ = s => document.querySelector(s);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const labels = {home:'今天',timetable:'我的课表',insights:'事项',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
+const labels = {home:'概览',timetable:'我的课表',insights:'事项',files:'文件资料',tasks:'待办提醒',messages:'原始记录',connections:'自动接入',settings:'设置'};
 let nativeState = null;
 let settingsTab='model', connectionTab='qq', sortOrder='latest', topicFilter='全部';
 let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignature='', groupSelecting=false;
@@ -35,9 +35,11 @@ async function refresh(renderPage=true) {
     const searchEnabled=['insights','files','tasks','messages'].includes(view);
     const rawQuery=$('#search').value, rawGroup=groupFilter;
     const query=searchEnabled?rawQuery:'', group=searchEnabled?rawGroup:'';
-    const [data,calendar]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams(plannerDate?{date:plannerDate}:{}))]);
+    const [data,calendar]=await Promise.all([api('/api/state?'+new URLSearchParams({q:query,group})),api('/api/planner?'+new URLSearchParams({...plannerDate?{date:plannerDate}:{},span:view==='home'&&homeScope==='month'?'month':'week'}))]);
     if(sequence!==loadSequence||rawGroup!==groupFilter||rawQuery!==$('#search').value)return;
     state=data;plannerState=calendar;notice();
+    const validGroups=view==='messages'?(state.history_groups||state.groups):state.groups;
+    if(groupFilter&&!validGroups.includes(groupFilter)){groupFilter='';localStorage.removeItem('qqm-group-filter');groupOptionsSignature='';return refresh(renderPage);}
     for(const k of ['insights','files','tasks']) $('#nav-'+k).textContent=state.counts[k];
     $('#nav-insights').textContent=state.counts.matters;
     $('#notification-count').textContent=state.notifications.length||'';
@@ -49,7 +51,7 @@ async function refresh(renderPage=true) {
 }
 function updateGroupOptions(){
  if(groupSelecting)return;
- const names=[...new Set([...(state?.groups||[]),...(nativeState?.groups||[]).filter(g=>g.selected).map(g=>g.group_name),...(groupFilter?[groupFilter]:[])])].sort((a,b)=>a.localeCompare(b,'zh-CN'));
+ const names=[...new Set(view==='messages'?(state?.history_groups||state?.groups||[]):(state?.groups||[]))].sort((a,b)=>a.localeCompare(b,'zh-CN'));
  const signature=JSON.stringify([names,groupFilter]);
  if(signature===groupOptionsSignature)return;
  $('#group-options').innerHTML=['',...names].map(g=>`<button role="option" aria-selected="${g===groupFilter}" data-group-value="${esc(g)}">${g===groupFilter?'✓ ':''}${esc(g||'全部群聊')}</button>`).join('');
@@ -67,7 +69,7 @@ function deliverBrowserNotifications(){
 function setView(next){
   const target=canonicalView(next);if(target===view)return;
   view=target;category='全部';topicFilter='全部';$('#search').value='';
-  location.hash=view;render();refresh();window.scrollTo(0,0);
+  location.hash=view;if(!(view==='timetable'&&plannerState?.days.length!==7))render();refresh();window.scrollTo(0,0);
 }
 
 function render(){
@@ -81,6 +83,7 @@ function render(){
   $('#import-button').textContent=view==='files'?'导入文件':'导入记录';
   $('#new-task-button').hidden=view!=='tasks';
   $('#content').innerHTML=({home:homeView,timetable:timetableView,insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
+  applyCalendarLayout();
   const m=state.llm||{},failed=m.counts?.failed||0;
   $('#analysis-status').textContent=failed?`${failed} 条分析失败`:m.enabled?'AI 已开启':'本地识别';
   $('#analysis-status').title=failed?'打开设置查看失败详情':'打开模型设置';
