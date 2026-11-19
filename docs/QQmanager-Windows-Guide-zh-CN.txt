@@ -1,0 +1,88 @@
+QQmanager｜在 Windows 上继续开发
+仓库长期维护版
+
+查看已合入 main 的开发进度、Windows 构建结果和可下载的版本：
+  开发记录  https://github.com/LzumiTulle/QQmanager/commits/main/
+  构建记录  https://github.com/LzumiTulle/QQmanager/actions/workflows/build.yml
+  安装包    https://github.com/LzumiTulle/QQmanager/releases
+
+本指南随仓库维护。在 Windows 上重新打开下方固定地址，即可查看当前版本。
+https://github.com/LzumiTulle/QQmanager/blob/main/docs/QQmanager-Windows-Guide-zh-CN.txt
+
+一、第一次在 Windows 上获取项目
+
+安装 Git for Windows 和 Python 3.12。完成后，打开一个新的 PowerShell 窗口。
+Git 下载：https://git-scm.com/downloads/win
+Python 下载：https://www.python.org/downloads/windows/
+
+在你想存放项目的文件夹中打开 PowerShell，逐行运行：
+
+    git clone --branch main https://github.com/LzumiTulle/QQmanager.git
+    cd QQmanager
+    git status -sb
+
+第一行只需执行一次。最后一条命令应显示分支 main。
+以后在 Windows 上开发，就用编辑器打开这个 QQmanager 文件夹。
+
+如果电脑上已经有这个仓库，直接在仓库文件夹打开 PowerShell。
+先运行 git status 确认已有修改都已保存并提交，然后执行：
+
+    git fetch origin
+    git switch main
+    git pull --ff-only
+
+二、运行项目并查看修改
+
+在 QQmanager 文件夹中运行：
+
+    .\start-windows.cmd
+
+首次启动会创建 Python 环境并安装依赖。保持终端打开，然后在浏览器访问：
+    http://127.0.0.1:8765
+
+按 Ctrl+C 可以停止本次服务。修改 Python 代码后，重新运行启动命令。
+如果提示端口 8765 已被占用，先退出正在运行的 QQmanager，再启动开发版。
+
+三、每次在 Mac 和 Windows 之间切换
+
+刚合入仓库的功能可以从 main 获取。如果正在开发的修改还在其他分支，
+先在原电脑运行 git branch --show-current 查看分支名，在另一台电脑运行
+git fetch origin，再用 git switch 切到同名分支。
+
+离开当前电脑前，在仓库文件夹中查看修改，把要同步的文件加入提交。
+例如，这次只修改了 web/app.js，就运行以下命令；其他文件请换成实际路径。
+
+    git status -sb
+    git add -- web/app.js
+    git diff --cached
+    git commit -m "更新事项页面"
+    git push
+
+等推送成功后，在另一台电脑的同一分支运行：
+
+    git pull --ff-only
+    git log -1 --oneline
+
+两台电脑最后一条提交的编号相同，就已同步到同一进度。
+如果拉取时提示分支已分叉，保留两边的修改，先核对各自的提交再合并。
+如果更新包含 requirements.txt 的变动，在 Windows 仓库中执行：
+
+    .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+四、代码、个人数据和安装包
+
+Git 同步已提交并推送的项目文件。群聊、待办、附件、模型密钥和 QQ 登录信息
+保存在各自电脑上，请勿加入公开仓库。
+
+只想使用桌面应用时，在本指南开头的「安装包」页面选择带有 Windows x64
+安装器的版本，展开 Assets 并下载 .exe。安装包内置运行环境。
+
+五、交接存档
+
+2026-11-19　Windows 0.4.2 的刷新进度显示和各项修复已合入 main。
+  合入记录  https://github.com/LzumiTulle/QQmanager/pull/1
+  发布快照  https://github.com/LzumiTulle/QQmanager/releases/tag/windows-v0.4.2
+
+维护时直接编辑仓库中的同一文件。启动方法、依赖或交接分支有变时，更新
+对应步骤；重要版本可追加日期、合入记录和发布链接。日常提交和构建进度
+可通过文首链接实时查看，指南的每次修改可在文件页的 History 中追溯。
