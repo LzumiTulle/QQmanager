@@ -54,8 +54,9 @@ class NativeTests(unittest.TestCase):
         self.n.events({'events':[self.event(time=now-500)]})
         self.s.set_setting('bridge_groups',['123456','998877'])
         self.n.events({'events':[self.event(group_id='998877',time=now-200)]})
-        # Emulate grants left by an existing 0.1.6 installation.
+        # These messages were already stored before the older installation granted access.
         with self.s.db:
+            self.s.db.execute("UPDATE messages SET created=CAST(strftime('%s',sent_at) AS INTEGER)")
             self.s.db.execute('DELETE FROM native_history_seeded')
         migrate_history(self.s)
         def starts():

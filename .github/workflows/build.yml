@@ -10,6 +10,10 @@ on:
         description: Build and verify only the Windows x64 installer
         type: boolean
         default: false
+      draft_windows_release:
+        description: Upload the verified Windows installer to a draft release
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -83,3 +87,28 @@ jobs:
           else
             gh release create "$TAG" --draft --prerelease --title "QQmanager $TAG 试用版" --notes "macOS / Windows 桌面试用版。未配置商业代码签名；Windows QQ 插件兼容性尚未实测。请阅读 README 和平台限制。" $(find artifacts -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \)) SHA256SUMS.txt
           fi
+
+  windows-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_only && inputs.draft_windows_release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: QQmanager-win-x64
+          path: installer
+      - name: Verify checksums and upload the Windows release candidate
+        working-directory: installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sha256sum -c SHA256SUMS.txt
+          files=(QQmanager-*-win-x64.exe)
+          [[ ${#files[@]} == 1 && ${files[0]} =~ ^QQmanager-([0-9]+\.[0-9]+\.[0-9]+)-win-x64\.exe$ ]]
+          version=${BASH_REMATCH[1]}
+          gh release create "windows-v$version" --target "$GITHUB_SHA" --draft --prerelease \
+            --title "QQmanager $version · Windows x64" --notes "Windows x64 试用版。" "${files[0]}" SHA256SUMS.txt
