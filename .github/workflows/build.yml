@@ -5,6 +5,11 @@ on:
     tags: ['v*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      windows_only:
+        description: Build and verify only the Windows x64 installer
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -12,16 +17,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-15
-            target: mac
-            arch: arm64
-          - os: macos-15-intel
-            target: mac
-            arch: x64
-          - os: windows-2025
-            target: win
-            arch: x64
+        os: ${{ fromJSON(inputs.windows_only && '["windows-2025"]' || '["macos-15","macos-15-intel","windows-2025"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
@@ -50,7 +46,7 @@ jobs:
       - if: runner.os == 'macOS'
         run: python scripts/build_mac_installer.py
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      - run: npm run dist:${{ matrix.target }}
+      - run: npm run dist:${{ runner.os == 'Windows' && 'win' || 'mac' }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - if: runner.os == 'Windows'
@@ -58,7 +54,7 @@ jobs:
       - run: python scripts/desktop/audit_release.py
       - uses: actions/upload-artifact@v4
         with:
-          name: QQmanager-${{ matrix.target }}-${{ matrix.arch }}
+          name: QQmanager-${{ runner.os == 'Windows' && 'win' || 'mac' }}-${{ matrix.os == 'macos-15' && 'arm64' || 'x64' }}
           path: |
             release/*.dmg
             release/*.zip

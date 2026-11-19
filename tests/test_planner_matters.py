@@ -57,10 +57,19 @@ class PlannerTests(unittest.TestCase):
         matters.update(self.s,dict(id=e['id'],split_insight=a))
         self.assertEqual(len(matters.list_matters(self.s)),4)
         separate=next(x for x in matters.list_matters(self.s) if x['title']=='第13周考试安排见图' and x['group_name']=='班级')
-        matters.update(self.s,dict(id=separate['id'],merge_into=e['id']))
+        child=separate['id']
+        self.assertEqual(matters.detail(self.s,child)['split_parent']['id'],e['id'])
+        self.assertEqual([x['id'] for x in matters.detail(self.s,e['id'])['split_children']],[child])
+        with self.assertRaises(ValueError):
+            matters.update(self.s,dict(id=child,rejoin_parent=next(x['id'] for x in es if x['group_name']=='另一个班')))
+        for _ in range(2):
+            self.assertEqual(matters.update(self.s,dict(id=child,rejoin_parent=e['id'])),{'id':e['id']})
+        self.assertFalse(matters.detail(self.s,e['id'])['split_children'])
         self.assertEqual(len(matters.list_matters(self.s)),3)
         other=next(x for x in es if x['group_name']=='另一个班')
-        with self.assertRaises(ValueError):matters.update(self.s,dict(id=e['id'],merge_into=other['id']))
+        matters.update(self.s,dict(id=e['id'],merge_into=other['id']))
+        self.assertEqual(len(matters.list_matters(self.s)),2)
+        self.assertEqual(matters.detail(self.s,e['id'])['groups'],['另一个班','班级'])
     def test_academic_topic_merges_documents_and_tasks(self):
         self.add('关于开展学生学业完成情况核查工作的通知',kind='资料')
         self.add('学习委员收集学位自查材料',kind='待办')

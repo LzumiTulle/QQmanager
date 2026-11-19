@@ -72,6 +72,62 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse(self.store.setting('bridge_enabled'))
         self.assertEqual(self.store.snapshot()['counts']['messages'], 0)
 
+    def test_managed_history_resume_replay_and_revocation(self):
+        from unittest.mock import Mock
+        self.login()
+        self.store.set_setting('ws_enabled',True)
+        self.store.set_setting('qq_managed_login',True)
+        self.connector.select_groups(['123','789'], {'123':'2020-01-01'})
+        self.assertIn('未选群',self.store.snapshot()['groups'])
+        db=self.store.db
+        def request():
+            socket=Mock()
+            self.connector.history_tick=0
+            self.connector.poll_history(socket)
+            return {p['params']['group_id']:p for (raw,),_ in socket.send.call_args_list for p in [json.loads(raw)]}
+        def reply(req, rows):
+            self.connector.handle_packet({'echo':req['echo'],'retcode':0,'data':{'messages':rows}})
+        req=request()
+        m=self.event()
+        same_second=self.event(message_id=92,message=[])
+        reply(req['123'],[m,same_second])
+        second=request()['123']
+        self.assertEqual(second['params']['message_seq'],'91')
+        reply(second,[self.event(time=1,message_id=90),m])
+        self.assertEqual(db.execute("select cursor from connector_history where group_id='123'").fetchone()[0],m['time'])
+        self.assertEqual(len(self.store.backfill_receipts()),2)
+        self.assertIn('[其他消息类型：未解析]',[r['preview'] for r in self.store.backfill_receipts()])
+        self.connector.handle_packet(m)
+        self.connector=Connector(self.store)
+        self.login()
+        replay=request()
+        arriving_offline=self.event(message_id=93,time=m['time']+1)
+        reply(replay['123'],[m,same_second,arriving_offline])
+        continuation=request()['123']
+        reply(continuation,[self.event(time=1,message_id=90),m])
+        self.connector.handle_packet(arriving_offline)
+        self.assertEqual(len(self.store.backfill_receipts()),3)
+        self.assertEqual(db.execute("select cursor from connector_history where group_id='123'").fetchone()[0],m['time']+1)
+        self.store.read_backfill([r['id'] for r in self.store.backfill_receipts()])
+        self.assertEqual(self.store.snapshot()['backfill_count'],0)
+        self.connector.select_groups(['123'])
+        reply(replay['789'],[self.event(group_id=789)])
+        self.assertEqual(db.execute('select count(*) from messages').fetchone()[0],3)
+        self.assertEqual(len(self.store.snapshot()['groups']),1)
+        self.assertEqual(self.store.snapshot()['history_groups'],['项目群'])
+
+    def test_managed_archive_retains_card_titles_and_empty_selected_group(self):
+        self.login()
+        self.connector.select_groups(['123','789'])
+        self.connector.handle_packet(self.event(message=[{'type':'json','data':{'data':json.dumps({
+            'meta':{'news':{'title':'生涯启航 科学规划 逐梦未来'}}})}}]))
+        self.connector.handle_packet(self.event(message_id=92,message=[{'type':'at','data':{'qq':'all'}}]))
+        snapshot=self.store.snapshot()
+        self.assertEqual({r['content'] for r in snapshot['messages']},{'[分享卡片] 生涯启航 科学规划 逐梦未来','@全体成员'})
+        self.connector.select_groups(['789'])
+        self.assertEqual(self.store.snapshot()['groups'],['未选群'])
+        self.assertIn('项目群',self.store.snapshot()['history_groups'])
+
     def test_only_loopback_urls(self):
         self.assertEqual(validate_url('ws://127.0.0.1:3001'), 'ws://127.0.0.1:3001')
         for url in ['ws://example.org:3001', 'ws://127.0.0.1:3001?access_token=x', 'ws://user:pass@localhost:3001', 'http://localhost:3001']:

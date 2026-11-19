@@ -17,6 +17,91 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.s.query('SELECT source FROM messages')[0]['source'],'QQ 客户端插件')
         self.assertEqual(self.s.query('SELECT state FROM analysis_jobs')[0]['state'],'pending')
         self.assertEqual(self.s.snapshot()['counts']['tasks'],0)
+
+    def test_history_checkpoint_survives_restart_and_only_covers_acknowledged_batches(self):
+        heartbeat={'account':'777777','history_state':'waiting'}
+        scope=self.n.heartbeat(heartbeat)['history'][0]
+        batch={'history':scope,'events':[self.event(time=scope['since'])]}
+        self.assertEqual(self.n.events(batch)['messages'],1)
+        self.assertEqual(self.n.events({'events':batch['events']})['messages'],0)
+        self.s.db.close()
+        self.s=Store(self.tmp.name)
+        self.n=NativeBridge(self.s)
+        self.assertEqual(self.n.heartbeat(heartbeat)['history'][0],scope)
+        self.assertEqual(self.n.events(batch)['new_ids'],[])
+        self.n.events({'history':dict(scope,through=scope['since']),'events':[]})
+        self.assertEqual(self.n.heartbeat(heartbeat)['history'][0]['cursor'],scope['since'])
+        self.assertEqual(self.n.snapshot()['history']['saved'],1)
+        self.assertEqual(len(self.s.query('SELECT * FROM analysis_jobs')),1)
+        self.assertFalse(self.n.heartbeat(dict(heartbeat,account='888888'))['history'])
+        with self.assertRaises(ValueError):
+            self.n.events(dict(batch,events=[self.event(time=scope['since']-1)]))
+        with self.assertRaises(ValueError):
+            self.n.events(dict(batch,events=[self.event(group_id='123457',time=scope['since'])]))
+        self.n.select_groups([])
+        self.n.select_groups(['123456'])
+        with self.assertRaises(ValueError):self.n.events(batch)
+        new_scope=self.n.heartbeat(heartbeat)['history'][0]
+        self.assertNotEqual(new_scope['grant_id'],scope['grant_id'])
+        self.s.set_setting('native_enabled',False)
+        self.s.set_setting('native_enabled',True)
+        with self.assertRaises(ValueError):self.n.events(dict(batch,history=new_scope))
+
+    def test_first_history_seed_uses_local_group_and_account_once(self):
+        import time
+        from qqmanager.native import migrate_history
+        now=int(time.time())
+        self.n.events({'events':[self.event(time=now-500)]})
+        self.s.set_setting('bridge_groups',['123456','998877'])
+        self.n.events({'events':[self.event(group_id='998877',time=now-200)]})
+        # Emulate grants left by an existing 0.1.6 installation.
+        with self.s.db:
+            self.s.db.execute('DELETE FROM native_history_seeded')
+        migrate_history(self.s)
+        def starts():
+            return {r['group_id']:r['since'] for r in self.s.query('SELECT group_id,since FROM native_history')}
+        self.assertEqual(starts(),{'123456':now-500,'998877':now-200})
+        self.n.select_groups(['123456'])
+        self.n.select_groups(['123456','998877'])
+        migrate_history(self.s)
+        self.assertGreaterEqual(starts()['998877'],now)
+        self.s.set_setting('ws_account','888888')
+        self.assertGreaterEqual(starts()['123456'],now)
+
+    def test_empty_group_date_is_inclusive_and_isolated(self):
+        from qqmanager.native import history_midnight
+        self.n.select_groups(['123456','999999'],start_dates={'999999':'2020-11-13'})
+        scopes={h['group_id']:h for h in self.n.snapshot()['empty_history']}
+        self.assertEqual(scopes['999999']['since'],history_midnight('2020-11-13'))
+        request=dict(scopes['999999'],date='2020-11-12')
+        self.n.start_history(request)
+        updated={h['group_id']:h for h in self.n.snapshot()['empty_history']}
+        self.assertEqual(updated['123456'],scopes['123456'])
+        scope=updated['999999']
+        self.assertNotEqual(scope['grant_id'],request['grant_id'])
+        self.assertEqual(scope['since'],1605110400)
+        with self.assertRaises(ValueError):self.n.start_history(request)
+        batch={'events':[self.event(group_id='999999',time=scope['since'])],'history':scope}
+        self.assertEqual(self.n.events(batch)['messages'],1)
+        self.assertEqual(self.n.events(batch)['messages'],0)
+        self.assertEqual(self.n.snapshot()['archived_groups'],['999999'])
+        with self.assertRaises(ValueError):self.n.start_history(dict(scope,date='2020-11-11'))
+    def test_group_selection_and_per_group_dates_save_together(self):
+        from qqmanager.native import history_midnight
+        original = self.n.snapshot()['empty_history'][0]
+        groups = ['123456', '999999']
+        self.n.select_groups(groups, start_dates={'123456':'2020-11-12', '999999':'2020-11-13'},
+                             start_grants={'123456':original['grant_id']})
+        scopes = {s['group_id']:s for s in self.n.snapshot()['empty_history']}
+        self.assertEqual(scopes['123456']['since'], history_midnight('2020-11-12'))
+        self.assertEqual(scopes['999999']['since'], history_midnight('2020-11-13'))
+        self.assertNotEqual(original['grant_id'], scopes['123456']['grant_id'])
+        with self.assertRaises(ValueError):
+            self.n.select_groups(groups + ['888888'], start_dates={'999999':'2020-11-10', '123456':'2020-11-10'},
+                                 start_grants={'999999':scopes['999999']['grant_id'], '123456':original['grant_id']})
+        self.assertEqual(self.s.setting('bridge_groups'), groups)
+        self.assertEqual({s['group_id']:s for s in self.n.snapshot()['empty_history']}, scopes)
+
     def test_wrong_account_rejects_entire_batch_and_other_groups_ignored(self):
         with self.assertRaises(ValueError):self.n.events({'events':[self.event(),self.event(self_id='888888')]})
         self.assertEqual(self.s.snapshot()['counts']['messages'],0)

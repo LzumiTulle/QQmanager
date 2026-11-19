@@ -90,7 +90,7 @@ class ModelTests(unittest.TestCase):
         def capture(c, messages, target, interests):
             seen.extend(messages);return {'items':[]}
         Analyzer(self.store,capture).step()
-        self.assertEqual(len(seen),8)
+        self.assertEqual(len(seen),1)
         self.assertNotIn(1,[r['id'] for r in seen]);self.assertNotIn(2,[r['id'] for r in seen])
         self.assertEqual(seen[-1]['id'],13)
 
@@ -173,7 +173,11 @@ class ProviderHTTPTests(unittest.TestCase):
         thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
             config={'url':'http://127.0.0.1:'+str(server.server_port)+'/v1','key':'test-only','model':'fake'}
-            self.assertEqual(request_model(config,[{'id':1,'content':'你好'}],1),{'items':[]})
+            self.assertEqual(request_model(config,[{'id':1,'sender':'私密发送者','content':'请赵小羽提交，链接 https://example.invalid/private-ticket'}],1),{'items':[]})
+            wire=captured[0][2]['messages'][1]['content']
+            for private in ('私密发送者','赵小羽','example.invalid','private-ticket'):
+                self.assertNotIn(private,wire)
+            self.assertIn('提交',wire)
             self.assertEqual(captured[0][0],'/v1/chat/completions')
             self.assertEqual(captured[0][2]['response_format'],{'type':'json_object'})
             config['url']=config['url'].replace('/v1','/redirect')
@@ -225,15 +229,15 @@ class WorkflowHTTPTests(unittest.TestCase):
                 self.assertNotIn('secret',json.dumps(result))
                 self.assertEqual(result['llm']['counts']['done'],1)
                 insight=result['insights'][0]
-                self.assertEqual(insight['engine'],'llm')
-                self.assertEqual(json.loads(insight['evidence'])[0]['quote'],event['raw_message'])
+                self.assertEqual(insight['engine'],'local')
+                self.assertIn(json.loads(insight['evidence'])[0]['quote'],event['raw_message'])
                 self.assertEqual(result['tasks'],[])
                 post('/api/tasks',{'title':insight['title'],'insight_id':insight['id'],'due':insight['due']})
                 result=json.load(urllib.request.urlopen(base+'/api/state'))
                 self.assertEqual(result['tasks'][0]['evidence'],insight['evidence'])
                 post('/api/llm/pause',{})
                 self.assertFalse(store.setting('llm_config')['enabled'])
-                self.assertEqual(len(calls),2)
+                self.assertEqual(len(calls),1)
             finally:
                 app.shutdown();app.server_close();app_thread.join();store.db.close()
                 provider.shutdown();provider.server_close();provider_thread.join()

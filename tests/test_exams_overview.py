@@ -1,5 +1,6 @@
 import copy,json,tempfile,unittest
 from datetime import datetime
+from unittest.mock import patch
 from qqmanager.store import Store
 from qqmanager import planner,exams,overview,matters
 from qqmanager.llm import signature
@@ -26,6 +27,77 @@ class ExamOverviewTests(unittest.TestCase):
         return mid
     def result(self):
         return {'exams':[dict(course='编译原理',date='2026-12-02',start_time='13:40',end_time='15:40',location='D115',audience='计算机241班',evidence=[dict(message_id=self.mid,quote=self.text)])]}
+    def test_local_table_keeps_confirmed_exam_and_rejects_wrong_week(self):
+        from qqmanager import exam_table, workflow
+        def cell(x,y,text):
+            return dict(x=x-.01,y=y-.005,w=.02,h=.01,text=text)
+        lines=[cell(.5,.04,'2026年秋学期 第13周考试安排'),
+               *[cell(x,.1,t) for x,t in [(0.07,'考试时间'),(.16,'考场'),(.3,'课程名称'),(.47,'班级'),(.72,'地点')]],
+               cell(.07,.15,'12月2日'),cell(.07,.17,'周三'),cell(.07,.19,'13:40-15:40'),
+               *[cell(x,.17,t) for x,t in [(.16,'1'),(.3,'编译原理'),(.47,'计算机241班'),(.72,'D115')]]]
+        exams.recognize_step(self.s,lambda *a,**kw:self.result())
+        confirmed=self.confirm_exam()
+        cfg=self.s.setting('llm_config');cfg['enabled']=False;self.s.set_setting('llm_config',cfg)
+        layout=dict(message_id=self.mid,layout=dict(lines=lines))
+        with patch.object(exams,'layouts',return_value=[layout]):
+            self.assertTrue(exams.recognize_step(self.s,lambda *a,**kw:self.fail('Unexpected model call')))
+            self.assertFalse(exams.recognize_step(self.s))
+        result=exams.snapshot(self.s)
+        event,=result['events']
+        self.assertEqual(event['task']['id'],confirmed['id'])
+        entry=workflow.snapshot(self.s,result,[])['matters'][str(event['matter_id'])]
+        self.assertEqual(entry['exam_sessions'][0]['date'],'2026-12-02')
+        self.assertEqual(entry['exams'][0]['start_time'],'13:40')
+        self.assertIsNone(exam_table.read(lines,planner.config(self.s),12,self.mid))
+        lines[6]=cell(.07,.15,'11月18日')
+        self.assertIsNone(exam_table.read(lines,planner.config(self.s),13,self.mid))
+
+    def test_profile_change_rebuilds_agenda_from_cache_without_changing_confirmed_task(self):
+        from qqmanager import identity, schedule
+        from qqmanager.workflow import snapshot as workflow_snapshot
+        result=self.result()
+        other=dict(result['exams'][0],course='线性代数',audience='B软件242',location='D202')
+        result.update(local=True,exams=[dict(result['exams'][0],audience='B计算机241'),other])
+        with patch.object(exams.exam_table,'extract',return_value=result):
+            self.assertTrue(exams.recognize_step(self.s,lambda *a,**kw:self.fail('unexpected model call')))
+        def select_class(classroom):
+            identity.save_profile(self.s,dict(account='67890',class_name=classroom))
+            return workflow_snapshot(self.s,exams.snapshot(self.s),[])
+        select_class('B计算机241')
+        saved=self.confirm_exam()
+        second=select_class('B软件242')
+        new,=second['calendar_exams']
+        self.assertEqual((new['course'],new['location']),('线性代数','D202'))
+        self.assertTrue(new['class_slot'])
+        self.assertEqual(new['matches'],[])
+        self.assertEqual(len(second['fixed_exams']),1)
+        self.assertTrue(second['fixed_exams'][0]['outside_class'])
+        self.assertEqual(self.s.due_notifications(now=2_000_000_000),[])
+        task_id=self.s.create_task(dict(title='复习'))
+        with self.assertRaisesRegex(ValueError,'时段冲突'):
+            schedule.save(self.s,dict(task_id=task_id,planned_date=new['date'],planned_start='13:45',planned_end='14:00',
+                                      expected=[None]*4))
+        third=select_class('B其他243')
+        self.assertFalse(third['calendar_exams'])
+        entry=third['matters'][str(new['matter_id'])]
+        self.assertTrue(entry['class_filtered'])
+        self.assertEqual(entry['label'],'未匹配本班')
+        with self.assertRaises(ValueError):
+            exams.confirm(self.s,dict(exam_id=new['id'],title='旧页面的考试'))
+        restored=select_class('B计算机241')
+        self.assertEqual([e['task_id'] for e in restored['calendar_exams']],[saved['id']])
+        self.assertEqual([r['id'] for r in self.s.due_notifications(now=2_000_000_000)],[saved['id']])
+        self.assertEqual(len(self.s.query('SELECT * FROM exam_extractions')),1)
+
+    def test_academic_week_in_notice_uses_calendar_and_skips_reason_for_change(self):
+        from qqmanager.schedule import notice_dates
+        def facts(text):
+            return notice_dates([dict(content=text,sent_at='2026-11-16T10:00:00+08:00')],
+                                calendar=planner.config(self.s),exam_week=12)
+        self.assertEqual(facts('第12周周三下午考试')[0]['value'],'2026-11-25')
+        self.assertEqual(facts('因12周周三下午校学位英语考试，原12周考试日程变动如上。'),[])
+        self.assertEqual(facts('第13周周三上午考试'),[])
+
     def test_candidates_match_courses_keep_evidence_and_never_change_calendar(self):
         before=planner.course_rows(self.s)
         result=self.result();result['exams'].append(copy.deepcopy(result['exams'][0]))
@@ -46,6 +118,52 @@ class ExamOverviewTests(unittest.TestCase):
         exams.recognize_step(self.s,lambda *a,**k:self.result())
         self.add('第13周考试补充：编译原理改为12月3日')
         self.assertFalse(exams.snapshot(self.s)['events']);self.assertTrue(exams.snapshot(self.s)['pending'])
+    def confirm_exam(self,due='2026-12-02T13:40:00+08:00'):
+        e=exams.snapshot(self.s)['events'][0]
+        return exams.confirm(self.s,dict(exam_id=e['id'],title=exams.task_title(e),due=due))
+    def test_confirm_is_idempotent_persistent_and_tracks_task_edits(self):
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        first=self.confirm_exam();second=self.confirm_exam()
+        self.assertEqual(first['id'],second['id'])
+        self.assertEqual(len(self.s.query('SELECT * FROM tasks')),1)
+        self.s.db.close();self.s=Store(self.tmp.name)
+        e=exams.snapshot(self.s)['events'][0]
+        self.assertFalse(e['needs_review']);self.assertEqual(e['task']['id'],first['id'])
+        self.s.update_task(first['id'],dict(due=None,status='done'))
+        e=exams.snapshot(self.s)['events'][0]
+        self.assertEqual(e['task']['status'],'done');self.assertIsNone(e['task']['due'])
+        self.assertEqual(self.confirm_exam()['id'],first['id'])
+        with self.s.db:self.s.db.execute('DELETE FROM tasks WHERE id=?',(first['id'],))
+        self.assertTrue(exams.snapshot(self.s)['events'][0]['needs_review'])
+    def test_recover_old_exact_reminders_without_deleting_duplicates(self):
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        e=exams.snapshot(self.s)['events'][0]
+        for n in range(3):self.s.create_task(dict(title=exams.task_title(e),due='2026-12-02T13:40:00+08:00'))
+        exams.recover_legacy(self.s)
+        self.assertFalse(exams.snapshot(self.s)['events'][0]['needs_review'])
+        self.assertEqual(self.confirm_exam()['id'],1)
+        self.assertEqual(len(self.s.query('SELECT * FROM tasks')),3)
+    def test_changed_facts_need_review_and_never_modify_confirmed_task(self):
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        old=self.confirm_exam();previous=exams.snapshot(self.s)['events'][0]
+        self.add('第13周考试补充：编译原理12月2日改为13:40-16:40')
+        with self.assertRaises(ValueError):exams.confirm(self.s,dict(exam_id=previous['id'],title='考试',due=None))
+        result=self.result();result['exams'][0]['end_time']='16:40'
+        self.assertTrue(exams.recognize_step(self.s,lambda *a,**k:result))
+        self.assertTrue(exams.snapshot(self.s)['events'][0]['needs_review'])
+        self.assertEqual(self.s.query('SELECT * FROM tasks')[0]['id'],old['id'])
+    def test_confirm_failure_does_not_save_partial_task(self):
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        with self.assertRaises(ValueError):self.confirm_exam(due='not-a-time')
+        self.assertEqual(self.s.query('SELECT * FROM tasks'),[])
+        self.assertEqual(self.s.query('SELECT * FROM exam_confirmations'),[])
+    def test_same_exam_in_new_notice_keeps_confirmation(self):
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        old=self.confirm_exam()
+        self.add('第13周考试补充：编译原理考试安排不变，请提前到场')
+        exams.recognize_step(self.s,lambda *a,**k:self.result())
+        e=exams.snapshot(self.s)['events'][0]
+        self.assertFalse(e['needs_review']);self.assertEqual(e['task']['id'],old['id'])
     def test_ocr_subject_and_class_matching_do_not_cross_other_classes(self):
         self.assertTrue(exams.near_name('编译原理','缤译原理'))
         self.assertFalse(exams.near_name('操作系统','操作系统课程设计'))

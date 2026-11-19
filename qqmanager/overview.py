@@ -21,13 +21,14 @@ def snapshot(s,day=None,span='day',offset=0):
         EXISTS(SELECT 1 FROM insights i WHERE i.message_id=m.id AND i.quality_reason='' AND i.status!='dismissed') important
         FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE '''+where,args)
     counts={'received':len(rows),'important':sum(r['important'] for r in rows),
-            'pending':sum(r['analysis_state'] in ('pending','running','failed') for r in rows)}
+            'pending':sum(r['analysis_state'] in ('pending','running') for r in rows),
+            'failed':sum(r['analysis_state']=='failed' for r in rows)}
     daily={};by_group={}
     for r in rows:
         date=datetime.fromtimestamp(r['created'],planner.TZ).date().isoformat()
         values=daily.setdefault(date,{'received':0,'important':0});values['received']+=1;values['important']+=r['important']
         values=by_group.setdefault(r['group_name'],{'received':0,'important':0});values['received']+=1;values['important']+=r['important']
-    ids={r['id'] for r in rows};mapping=s.query('SELECT DISTINCT i.message_id,mm.matter_id FROM insights i JOIN matter_members mm ON mm.insight_id=i.id')
+    ids={r['id'] for r in rows if r['important']};mapping=s.query('SELECT DISTINCT i.message_id,mm.matter_id FROM insights i JOIN matter_members mm ON mm.insight_id=i.id')
     active={r['matter_id'] for r in mapping if r['message_id'] in ids}
     important=[m for m in matters.list_matters(s) if m['id'] in active and m['status']!='dismissed']
     latest=s.query('''SELECT m.*,j.state analysis_state FROM messages m LEFT JOIN analysis_jobs j ON j.message_id=m.id WHERE '''+where+' ORDER BY m.created DESC,m.id DESC LIMIT 20 OFFSET ?',[*args,offset])

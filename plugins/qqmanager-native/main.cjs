@@ -12,7 +12,7 @@ function start(configPath) {
   if(url.protocol!=='http:' || url.hostname!=='127.0.0.1' || url.pathname!=='/' || url.username || url.password || url.search || url.hash)throw Error('Local endpoint required');
   if(typeof config.token!=='string'||config.token.length<32)throw Error('Local pairing required');
   const directory=path.dirname(configPath),outboxPath=path.join(directory,'outbox.json');
-  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.5',events:0,selected:0,dropped:0,signals:{}};
+  const startedAt=Date.now()/1000,diagnostics={started_at:startedAt,platform:process.platform,architecture:process.arch,version:'0.1.7',events:0,selected:0,dropped:0,signals:{}};
   const allowed=new Set(config.groups||[]);let account=String(config.account||''),enabled=false,queue=[],busy=false,lastError='',lastConfig=0,identity='';
   const seen=new Set();
   const media=createMedia({directory,authorized:(who,group)=>enabled&&String(who)===account&&allowed.has(String(group)),request,signal,enqueue:event=>{if(queue.length<2000)queue.push(event);}});
@@ -61,7 +61,7 @@ function start(configPath) {
     return new Promise((resolve,reject)=>{
       const raw=Buffer.from(JSON.stringify(body));
       const req=http.request(new URL(route,url),{method:'POST',headers:{'Authorization':'Bearer '+config.token,'Content-Type':'application/json','Content-Length':raw.length},timeout:4000},res=>{
-        let data='',size=0;res.on('data',chunk=>{size+=chunk.length;if(size>100000)req.destroy(Error('response too large'));else data+=chunk;});
+        let data='',size=0;res.on('data',chunk=>{size+=chunk.length;if(size>1024*1024)req.destroy(Error('response too large'));else data+=chunk;});
         res.on('end',()=>{try{if(res.statusCode!==200)throw Error('HTTP '+res.statusCode);resolve(JSON.parse(data));}catch(e){reject(e);}});
       });req.on('timeout',()=>req.destroy(Error('timeout')));req.on('error',reject);req.end(raw);
     });
@@ -72,9 +72,10 @@ function start(configPath) {
       await fs.promises.writeFile(outboxPath+'.tmp',JSON.stringify(queue),{mode:0o600});
       await fs.promises.rename(outboxPath+'.tmp',outboxPath);
       if(Date.now()-lastConfig>10000){
-        const result=await request('/api/native/heartbeat',{...diagnostics,account:identity||groupIdentity?.()||'',queued:queue.length,error:lastError,
+        const result=await request('/api/native/heartbeat',{...diagnostics,account:media.currentAccount()||groupIdentity?.()||identity||'',history_state:media.historyState(),history_reports:media.historyReports(),queued:queue.length,error:lastError,
           ...(groupCatalog?.account===account?{group_catalog:groupCatalog}:{})});
         account=String(result.account||'');enabled=!!result.enabled;allowed.clear();for(const g of result.groups||[])allowed.add(String(g));lastConfig=Date.now();
+        media.catchUp(result).catch(()=>signal('history_retry'));
         media.recover(result).catch(()=>signal('attachment_recovery_failed'));
         if(groupCatalog&&groupCatalog.account!==account)groupCatalog=null;
         if(groupReader&&groupIdentity?.()===account&&Date.now()-lastGroupRequest>10000&&

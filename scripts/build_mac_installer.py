@@ -15,7 +15,7 @@ stage=Path(tempfile.mkdtemp(prefix='.installer-build-',dir=APP.parent))/'QQmanag
 contents=stage/'Contents';binary=contents/'MacOS';resources=contents/'Resources/plugin'
 binary.mkdir(parents=True,exist_ok=True);resources.mkdir(parents=True,exist_ok=True)
 for name in ('core.cjs','main.cjs','media.cjs','manifest.json'):shutil.copy2(ROOT/'plugins/qqmanager-native'/name,resources/name)
-info={'CFBundleIdentifier':'local.qqmanager.installer','CFBundleName':'QQmanager Installer','CFBundleDisplayName':'QQmanager 插件安装助手','CFBundleExecutable':'QQmanagerInstaller','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.5','CFBundleVersion':'5','LSMinimumSystemVersion':'12.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True}}
+info={'CFBundleIdentifier':'local.qqmanager.installer','CFBundleName':'QQmanager Installer','CFBundleDisplayName':'QQmanager 插件安装助手','CFBundleExecutable':'QQmanagerInstaller','CFBundlePackageType':'APPL','CFBundleShortVersionString':'0.1.7','CFBundleVersion':'7','LSMinimumSystemVersion':'12.0','NSHighResolutionCapable':True,'NSAppTransportSecurity':{'NSAllowsLocalNetworking':True}}
 (contents/'Info.plist').write_bytes(plistlib.dumps(info))
 cache=ROOT/'data/swift-module-cache';cache.mkdir(parents=True,exist_ok=True)
 subprocess.run(['xcrun','swiftc','-module-cache-path',str(cache),'-target',platform.machine()+'-apple-macos12.0','-O',str(ROOT/'macos/QQmanagerInstaller/main.swift'),'-o',str(binary/'QQmanagerInstaller'),'-framework','AppKit','-framework','CryptoKit'],check=True)

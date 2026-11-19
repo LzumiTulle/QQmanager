@@ -30,7 +30,7 @@ final class Installer: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle:"退出 QQmanager 安装助手",action:#selector(NSApplication.terminate(_:)),keyEquivalent:"q")
         appItem.submenu=appMenu;menu.addItem(appItem);NSApp.mainMenu=menu
         window=NSWindow(contentRect:NSRect(x:0,y:0,width:660,height:490),styleMask:[.titled,.closable,.miniaturizable],backing:.buffered,defer:false)
-        window.title="QQmanager 插件安装助手 · 0.1.5 实验版";window.center();window.isReleasedWhenClosed=false
+        window.title="QQmanager 插件安装助手 · 0.1.7 实验版";window.center();window.isReleasedWhenClosed=false
         let root=NSStackView();root.orientation = .vertical;root.alignment = .leading;root.spacing=18;root.edgeInsets=NSEdgeInsets(top:26,left:26,bottom:24,right:26)
         root.translatesAutoresizingMaskIntoConstraints=false;window.contentView!.addSubview(root)
         NSLayoutConstraint.activate([root.topAnchor.constraint(equalTo:window.contentView!.topAnchor),root.bottomAnchor.constraint(equalTo:window.contentView!.bottomAnchor),root.leadingAnchor.constraint(equalTo:window.contentView!.leadingAnchor),root.trailingAnchor.constraint(equalTo:window.contentView!.trailingAnchor)])
@@ -100,12 +100,37 @@ final class Installer: NSObject, NSApplicationDelegate {
         return try object(data)
     }
     func writePrivate(_ data:Data,_ url:URL)throws {try data.write(to:url,options:.atomic);try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)}
+    @MainActor func updateRunningPlugin() async {
+        let folder=FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Containers/com.tencent.qq/Data/Documents/QQmanager-native",isDirectory:true)
+        let panel=NSOpenPanel()
+        panel.title="更新已安装的 QQmanager 插件"
+        panel.message="请选择 QQmanager-native 文件夹。新版会在下次打开 QQ 时加载。"
+        panel.directoryURL=folder;panel.prompt="更新插件"
+        panel.canChooseFiles=false;panel.canChooseDirectories=true;panel.canCreateDirectories=false
+        guard let url=await choose(panel) else{return}
+        let access=url.startAccessingSecurityScopedResource()
+        defer {if access{url.stopAccessingSecurityScopedResource()}}
+        do {
+            guard url.standardizedFileURL.path==folder.standardizedFileURL.path,
+                  try object(Data(contentsOf:url.appendingPathComponent("manifest.json")))["slug"] as? String=="qqmanager_native"
+            else {throw Failure("请选择已安装的 QQmanager-native 文件夹。首次安装请在退出 QQ 后进行。")}
+            // Install dependencies first so the entry is usable even if QQ is relaunched mid-update.
+            for name in ["core.cjs","media.cjs","main.cjs","manifest.json"] {
+                guard let resource=Bundle.main.resourceURL?.appendingPathComponent("plugin").appendingPathComponent(name)
+                else {throw Failure("安装包资源缺失")}
+                let data=try Data(contentsOf:resource),target=url.appendingPathComponent(name)
+                try writePrivate(data,target)
+                guard try Data(contentsOf:target)==data else {throw Failure("插件文件校验失败，请重试。")}
+            }
+            log("插件 0.1.7 已更新。下次正常打开 QQ 时会自动补收已选群的消息。")
+        } catch {log("更新未完成。\(error.localizedDescription)")}
+    }
     @objc func install(){
         guard !operationInProgress else{return}
-        if hasQQRunning(){log("请先保存待发送内容，并在 QQ 菜单中选择“退出 QQ”。\n安装助手不会自动退出你的 QQ。退出后再点击“安装插件”。");return}
         busy(true)
         Task { @MainActor in
             defer {busy(false)}
+            if hasQQRunning(){await updateRunningPlugin();return}
             guard let app=await chooseQQ(),let documents=await chooseData() else{return}
             let appScope=app.startAccessingSecurityScopedResource(),dataScope=documents.startAccessingSecurityScopedResource()
             defer {if appScope{app.stopAccessingSecurityScopedResource()};if dataScope{documents.stopAccessingSecurityScopedResource()}}
@@ -135,7 +160,7 @@ final class Installer: NSObject, NSApplicationDelegate {
                 }
                 try writePrivate(json(config),profile.appendingPathComponent("config.json"))
                 if updating {
-                    log("插件已更新至 0.1.5。请正常打开 QQ。\n\n本次仅更新 QQmanager-native 中的扩展文件和本机配对配置；原始 QQ 入口备份保持不变。\n请在 QQmanager“自动接入”验证账号匹配、消息监听和真实消息入库。")
+                    log("插件已更新至 0.1.7。请正常打开 QQ。\n\n本次仅更新 QQmanager-native 中的扩展文件和本机配对配置；原始 QQ 入口备份保持不变。\n请在 QQmanager“自动接入”验证账号匹配、消息监听和真实消息入库。")
                     return
                 }
                 let loader="""

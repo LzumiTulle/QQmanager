@@ -5,6 +5,7 @@ import re
 import time
 from datetime import date, timedelta
 from . import planner
+from .private_model import excerpt
 
 SIGNAL = re.compile(r'调课|调至|调到|调整[到至为]|改[到至在为]|移[到至]|调换|课程.{0,12}(?:变更|调整)|换教室|上课.{0,10}(?:变更|调整)')
 
@@ -49,6 +50,15 @@ def source(s,e):
         if not job or not Analyzer(s).allowed(job[0]):continue
         messages.append(dict(id=m['id'],sent_at=m['sent_at'],content=analysis_source(s,m)['content'][:14000]))
     return dict(matter_id=e['id'],title=e['title'],group_name=e['group_name'],messages=sorted(messages,key=lambda m:m['id']),calendar={k:v for k,v in planner.config(s).items() if k!='class_name'})
+
+def schedule_input(src):
+    # Relative dates need the sending day and academic week anchor, not a
+    # group name, a full timestamp or the user's personal calendar profile.
+    calendar={k:src['calendar'][k] for k in ('anchor_date','anchor_week','total_weeks','blocks')}
+    return dict(calendar=calendar,messages=[
+        dict(id=m['id'],sent_at=(m['sent_at'] or '')[:10],content=excerpt(m['content'].split('【表格坐标文字')[0],1800))
+        for m in src['messages']])
+
 
 def source_key(src):
     # Semantic grouping may rename a matter without changing its underlying evidence.
@@ -111,7 +121,7 @@ def recognize_step(s,caller=None):
             else:
                 cid=s.db.execute('INSERT INTO schedule_changes(matter_id,source_key,source,state,attempts,created,retry_at) VALUES (?,?,?,?,1,?,?)',(e['id'],key,json.dumps(src,ensure_ascii=False),'error',time.time(),time.time()+120)).lastrowid
         try:
-            value=(caller or request_json)(cfg,[{'role':'system','content':PROMPT},{'role':'user','content':json.dumps(src,ensure_ascii=False)}],max_tokens=6000)
+            value=(caller or request_json)(cfg,[{'role':'system','content':PROMPT},{'role':'user','content':json.dumps(schedule_input(src),ensure_ascii=False)}],max_tokens=6000)
             result=validate_result(value,src)
             with s.lock,s.db:
                 current=source(s,matters.detail(s,e['id']))
@@ -136,6 +146,24 @@ def recognize_step(s,caller=None):
 
 def name_key(name):return re.sub(r'[\s·•（）()\-]','',name).removesuffix('课')
 
+def applied_moves(s):
+    owners={(r['course_id'],r['source_date']):r['change_id'] for r in s.query('SELECT * FROM course_overrides')}
+    return [(r['matter_id'],x) for r in s.query("SELECT id,matter_id,history FROM schedule_changes WHERE state='applied'")
+            for x in json.loads(r['history'])['rows'] if owners.get((x['course_id'],x['source_date']))==r['id']]
+
+def previous_move(applied,mid,item):
+    keys=('from_date','to_date','from_start_period','from_end_period','to_start_period','to_end_period')
+    location=re.sub(r'\s*@全体成员\s*$','',item.get('location') or '').strip()
+    refs={e['message_id'] for e in item.get('evidence',[])}
+    matches=[x for owner,x in applied if all(x.get(k)==item.get(k) for k in keys)
+             and (not location or x.get('location')==location)
+             and (name_key(x['course'])==name_key(item['course']) if item.get('course')
+                  else owner==mid and any(e['message_id'] in refs for e in x.get('evidence',[])))]
+    return matches[0] if len(matches)==1 else None
+
+def past_move(item):
+    return all(item.get(k) and item[k]<planner.today().isoformat() for k in ('from_date','to_date'))
+
 def current_sources(s,src):
     """Detect source edits, newly merged updates, removed group access and term changes."""
     from . import matters
@@ -158,14 +186,16 @@ def review(s,cid):
         if row['state']!='pending':return result
         current=current_sources(s,src)
         if not current or source_key(current)!=row['source_key']:result['issues'].append('通知、收集范围或校历已更新，请重新识别后确认')
-        applied_rows=[x for r in s.query("SELECT history FROM schedule_changes WHERE state='applied'") for x in json.loads(r['history'])['rows']]
+        applied_rows=applied_moves(s)
         used=set()
         for item in payload.get('changes',[]):
             matched=[x for x in lessons if x['date']==item['from_date'] and x['start_period']==item['from_start_period'] and x['end_period']==item['from_end_period'] and item['course'] and name_key(x['title'])==name_key(item['course'])]
             entry=dict(item,matched=False)
-            prior=next((x for x in applied_rows if name_key(x['course'])==name_key(item['course']) and all(x[k]==item[k] for k in ('from_date','to_date','from_start_period','from_end_period','to_start_period','to_end_period')) and (item['location'] is None or item['location']==x['location']) and any(y['id']==x['course_id'] and y['source_date']==x['source_date'] and y['date']==x['to_date'] and y['start_period']==x['to_start_period'] and y['end_period']==x['to_end_period'] and y['location']==x['location'] for y in lessons)),None)
+            prior=previous_move(applied_rows,row['matter_id'],item)
             if prior:
                 result['rows'].append(dict(prior,matched=False,already_applied=True));continue
+            if past_move(item):
+                result['rows'].append(dict(entry,expired=True));continue
             if len(matched)!=1:
                 entry['issue']='未找到唯一对应课程，请核对课程名和原时段' if not matched else '同名同时间课程不止一门，请先整理重复课程'
             elif not all(item.get(k) is not None for k in ('to_date','to_start_period','to_end_period')):
@@ -194,10 +224,14 @@ def review(s,cid):
 
 def list_changes(s):
     result=[]
+    applied=applied_moves(s)
     active={(x['course_id'],x['source_date']):x['change_id'] for x in s.query('SELECT course_id,source_date,change_id FROM course_overrides')}
     for row in s.query("SELECT * FROM schedule_changes WHERE state IN ('pending','applied','error','unmatched') ORDER BY id DESC LIMIT 100"):
         src=json.loads(row['source']);data=json.loads(row['history'] or row['payload'])
         changes=data.get('rows',data.get('changes',[]))
+        if row['state']=='pending' and changes:
+            changes=[x for x in changes if not past_move(x) and not previous_move(applied,row['matter_id'],x)]
+            if not changes:continue
         if row['state']=='applied':
             changes=[x for x in changes if active.get((x['course_id'],x['source_date']))==row['id']]
             if not changes:continue
@@ -221,6 +255,8 @@ def apply(s,body):
             value={k:x['to_'+k] for k in ('date','start_period','end_period')};value['location']=x['location']
             s.db.execute('INSERT INTO course_overrides(course_id,source_date,payload,change_id) VALUES (?,?,?,?) ON CONFLICT(course_id,source_date) DO UPDATE SET payload=excluded.payload,change_id=excluded.change_id',(x['course_id'],x['source_date'],json.dumps(value,ensure_ascii=False),cid))
         s.db.execute("UPDATE schedule_changes SET state='applied',applied=?,history=? WHERE id=?",(time.time(),json.dumps(dict(rows=plan['rows'],before=before),ensure_ascii=False),cid))
+        from .workflow import remember
+        remember(s,plan['matter_id'],'scheduled')
         return {'updated':len(plan['rows'])}
 
 def action(s,body):

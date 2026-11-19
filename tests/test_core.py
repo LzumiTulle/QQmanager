@@ -44,6 +44,13 @@ class ExtractionTests(unittest.TestCase):
         self.assertIn('\n附件', rows[0]['content'])
         self.assertEqual(rows[1]['sender'], '李四')
 
+    def test_qq_sticker_keeps_the_accompanying_text(self):
+        from qqmanager.importers import segments
+        from qqmanager.quality import noise_reason
+        face = {'type':'mface','data':{}}
+        self.assertEqual(segments([{'type':'text','data':{'text':'请大家相互转告'}},face]),'请大家相互转告[表情]')
+        self.assertEqual(noise_reason(segments([face,face])),'仅表情')
+
     def test_json_csv_and_bad_input(self):
         rows = parse_chat('a.json', json.dumps({'messages':[{'text':'报名截止','sender':'张三','time':1794618000}]}).encode(), '群')
         self.assertIsNotNone(rows[0]['sent_at'])
@@ -103,11 +110,60 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(reopened.snapshot()['counts']['messages'], 1)
         reopened.db.close()
 
+    def test_unread_follows_original_across_replay_account_changes_and_restart(self):
+        store = self.store
+        row = dict(group_name='课程群', sender='老师', content='通知：请提交作业',
+                   sent_at='2026-11-19T09:00:00+08:00', _live_group='g', _account='A')
+        store.set_setting('ws_account', 'A')
+        store.add_messages([row, dict(row, _account='B', _backfill=True)], 'QQ')
+        store.add_messages([dict(row, content='通知：请核对考试时间', _backfill=True)], 'QQ')
+        self.assertEqual(store.library('messages')['days'][0]['unread'], 2)
+        self.assertEqual(store.snapshot()['counts']['unread_messages'], 2)
+        store.read_backfill([1, 2, 3])
+        self.assertEqual(store.snapshot()['counts']['unread_messages'], 1)
+        self.assertEqual(store.backfill_receipts(), [])
+        store.read_messages([1, 2])
+        self.assertEqual(store.add_messages([row], 'QQ')['duplicates'], 1)
+        reopened = Store(store.directory)
+        try:
+            self.assertEqual(reopened.snapshot()['counts']['unread_messages'], 0)
+            reopened.set_setting('ws_account', 'B')
+            self.assertEqual(reopened.snapshot()['counts']['unread_messages'], 1)
+            self.assertEqual(len(reopened.backfill_receipts()), 1)
+            reopened.read_messages([2])
+            self.assertEqual(reopened.backfill_receipts(), [])
+        finally:
+            reopened.db.close()
+
+    def test_library_uses_message_time_before_applying_result_limit(self):
+        rows = [('recent', '2026-11-18T00:01:00+08:00')]
+        rows.extend((f'old-{n}', '2026-11-17T15:59:00Z') for n in range(500))
+        rows.append(('undated', None))
+        with self.store.db:
+            self.store.db.executemany(
+                'INSERT INTO messages(content,sent_at,group_name) VALUES (?, ?, "test")', rows)
+        found = self.store.search('messages', group='test')
+        self.assertEqual(len(found), 500)
+        self.assertEqual(found[0]['content'], 'recent')
+        self.assertEqual(found[1]['content'], 'old-499')
+        self.assertEqual(self.store.search('messages', 'undated')[0]['content'], 'undated')
+        archive = self.store.library('messages', group='test', day='2026-11-17', offset=450)
+        self.assertEqual([(d['day'], d['count']) for d in archive['days']],
+                         [('2026-11-18', 1), ('2026-11-17', 500), ('unknown', 1)])
+        self.assertEqual(len(archive['rows']), 50)
+        self.assertEqual(archive['rows'][-1]['content'], 'old-0')
+        filtered = self.store.library('messages', query='recent', group='test', day='2026-11-18')
+        self.assertEqual([d['preview'] for d in filtered['days']], ['recent'])
+        self.assertEqual(filtered['rows'][0]['content'], 'recent')
+        self.assertEqual(self.store.library('messages', day='unknown')['rows'][0]['content'], 'undated')
+
     def test_filename_content_search_and_literal_wildcards(self):
         self.store.import_data('教程.md', 'Python 数据分析，完成率100%'.encode(), '技术群', 'file')
         self.store.import_data('照片.jpg', b'not-an-image', '摄影群', 'file')
         self.assertEqual(len(self.store.search('files', 'Python 分析')), 1)
         self.assertEqual(len(self.store.search('files', '%')), 1)
+        archive = self.store.library('files', query='%', group='技术群')
+        self.assertEqual([(d['preview'], d['count']) for d in archive['days']], [('教程.md', 1)])
         self.assertEqual(len(self.store.search('files', 'Python', '摄影群')), 0)
         self.assertIn('暂不支持', self.store.search('files', '照片')[0]['parse_status'])
 

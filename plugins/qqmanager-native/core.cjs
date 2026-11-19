@@ -1,6 +1,14 @@
 'use strict';
 // No Electron dependency: the same normalizer and wrapper observer run on Mac/Windows.
 const numeric = v => typeof v === 'string' && /^\d{5,20}$/.test(v) ? v : typeof v === 'number' && Number.isSafeInteger(v) && v > 0 ? String(v) : '';
+function cardTitle(ark){
+  if(typeof ark.bytesData!=='string'||ark.bytesData.length>131072)return '';
+  try{
+    const card=JSON.parse(ark.bytesData);
+    const detail=card.meta?.detail_1||card.meta?.news;
+    return [detail?.title,detail?.desc,card.prompt].find(value=>typeof value==='string'&&value.trim())?.trim().slice(0,250)||'';
+  }catch{return '';}
+}
 function normalizeMessage(row, account, groups, startedAt) {
   if (!row || Number(row.chatType)!==2 || !numeric(account)) return null;
   const group=numeric(row.peerUin)||numeric(row.peerUid);
@@ -16,6 +24,7 @@ function normalizeMessage(row, account, groups, startedAt) {
       const f=e.fileElement||e.picElement;
       segments.push({type:e.picElement?'image':'file',data:{name:String(f.fileName||(e.picElement?'图片.jpg':'未命名文件')).slice(0,250),element_id:String(e.elementId||'').slice(0,40),size:Math.max(0,Math.min(Number(f.fileSize)||0,2**40))}});
     }
+    else if(e.arkElement) segments.push({type:'text',data:{text:('[分享卡片] '+cardTitle(e.arkElement)).trim()}});
     else if(e.faceElement || e.marketFaceElement) segments.push({type:'text',data:{text:'[表情]'}});
     else if(e.replyElement) segments.push({type:'text',data:{text:'[引用消息]'}});
     else if(e.pttElement) segments.push({type:'text',data:{text:'[语音：未解析]'}});

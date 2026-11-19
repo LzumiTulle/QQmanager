@@ -4,28 +4,53 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QQmanager</title>
   <meta name="description" content="整理群聊重点、资料与待办。">
-  <link rel="stylesheet" href="/style.css"><script src="/filter-model.js" defer></script><script src="/planner-model.js" defer></script><script src="/planner.js" defer></script><script src="/app.js" defer></script>
+  <link rel="stylesheet" href="/style.css"><script src="/filter-model.js" defer></script><script src="/planner-model.js" defer></script><script src="/planner.js" defer></script><script src="/schedule.js" defer></script><script src="/app.js" defer></script>
 </head>
 <body>
+  <svg class="icon-defs" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg"><defs>
+    <symbol id="icon-home" viewBox="0 0 24 24"><path d="M3 10l9-7 9 7v10H3z M9 20v-7h6v7"/></symbol>
+    <symbol id="icon-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11 M3 6l1 1 2-3 M3 12l1 1 2-3 M3 18l1 1 2-3"/></symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24"><path d="M4 5h16v16H4z M4 10h16 M8 3v4 M16 3v4 M8 14h2 M14 17h2"/></symbol>
+    <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6h7l2 2h9v12H3z"/></symbol>
+    <symbol id="icon-sliders" viewBox="0 0 24 24"><path d="M4 7h4m5 0h7M4 17h9m5 0h2 M8 4h5v6H8z M13 14h5v6h-5z"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><path d="M15 15l6 6 M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0"/></symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5z M10 20q2 2 4 0"/></symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14"/></symbol>
+    <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5 M4 16v5h16v-5"/></symbol>
+    <symbol id="icon-pending" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18 M12 7v5l3 2"/></symbol>
+    <symbol id="icon-done" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18 M8 12l3 3 5-6"/></symbol>
+    <symbol id="icon-change" viewBox="0 0 24 24"><path d="M3 8h15l-4-4 M21 16H6l4 4"/></symbol>
+    <symbol id="icon-review" viewBox="0 0 24 24"><path d="M4 4h16v13H9l-5 4z M12 7v3m0 3h.01"/></symbol>
+    <symbol id="icon-message" viewBox="0 0 24 24"><path d="M3 4h18v13H9l-6 4z M7 8h9m-9 4h6"/></symbol>
+    <symbol id="icon-file" viewBox="0 0 24 24"><path d="M5 3h9l5 5v13H5z M14 3v6h5 M8 13h7m-7 4h5"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="icon-read" viewBox="0 0 24 24"><path d="m3 12 4 4L17 6 M12 16l9-10"/></symbol>
+  </defs></svg>
   <aside class="sidebar">
     <a href="#home" class="brand"><span class="brand-icon">Q</span>QQmanager</a>
     <nav aria-label="主导航">
-      <button data-view="home"><span aria-hidden="true">⌂</span>概览</button>
-      <button data-view="timetable"><span aria-hidden="true">▦</span>课表</button>
-      <button data-view="insights"><span aria-hidden="true">≡</span>事项<i id="nav-insights">0</i></button>
-      <button data-view="files"><span aria-hidden="true">▤</span>文件<i id="nav-files">0</i></button>
-      <button data-view="tasks"><span aria-hidden="true">✓</span>待办<i id="nav-tasks">0</i></button>
+      <button data-view="home"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-calendar"></use></svg>日程表</button>
+      <button data-view="insights"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-list"></use></svg>事项<i class="unread-dot" role="img" aria-label="有未读消息" hidden></i></button>
+      <button data-view="messages"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-folder"></use></svg>资料库<i class="unread-dot" role="img" aria-label="有未读消息" hidden></i></button>
     </nav>
     <div class="sidebar-bottom">
-      <nav aria-label="管理"><button data-view="messages"><span aria-hidden="true">▤</span>原始记录</button><button data-view="connections"><span aria-hidden="true">⇄</span>接入</button><button data-view="settings"><span aria-hidden="true">⚙</span>设置</button></nav>
+      <nav aria-label="管理"><button data-view="settings"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-sliders"></use></svg>设置</button></nav>
       <button id="analysis-status" class="status-button sidebar-status" data-view="settings">本地识别</button><div class="theme-switch" role="group" aria-label="外观"><button data-theme-choice="light" aria-pressed="true">浅色</button><button data-theme-choice="dark" aria-pressed="false">深色</button></div>
     </div>
   </aside>
   <main>
-    <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="notifications-button" aria-label="查看提醒">提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden>导入记录</button><button class="primary" id="new-task-button" hidden>新建待办</button></div></header>
+    <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="review-button" data-action="review-history" title="复查历史消息并更新日程建议">刷新</button><button id="notifications-button" aria-label="查看提醒"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-bell"></use></svg>提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-upload"></use></svg><span id="import-label">导入记录</span></button><button class="primary" id="new-task-button" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-plus"></use></svg>新建待办</button></div></header>
     <div class="page">
+      <section id="review-status" hidden aria-label="刷新状态">
+        <div class="review-summary" role="status"><strong id="review-phase"></strong><span id="review-count"></span></div>
+        <progress id="review-progress" aria-label="刷新进度"></progress>
+        <div id="review-detail"></div>
+      </section>
       <div id="notice" role="status" hidden></div>
-      <div class="searchbar" id="searchbar"><span aria-hidden="true">⌕</span><input id="search" placeholder="搜索重要信息" aria-label="搜索内容"><kbd>⌘ K</kbd><div class="group-filter-wrap" id="group-filter-wrap"><button id="group-filter" aria-label="筛选群聊" aria-haspopup="listbox" aria-expanded="false" aria-controls="group-options">全部群聊 ▾</button><div id="group-options" class="group-options" role="listbox" aria-label="群聊列表" hidden></div></div></div>
+      <div class="list-controls">
+      <div id="section-nav" hidden></div>
+      <div class="searchbar" id="searchbar"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-search"></use></svg><input type="search" id="search" placeholder="搜索重要信息" aria-label="搜索内容"><kbd id="search-shortcut"></kbd><div class="group-filter-wrap" id="group-filter-wrap"><button id="group-filter" aria-label="筛选群聊" aria-haspopup="listbox" aria-expanded="false" aria-controls="group-options">全部群聊 ▾</button><button id="clear-group" data-group-value="" title="清除群聊筛选" aria-label="清除群聊筛选" hidden>×</button><div id="group-options" class="group-options" role="listbox" aria-label="群聊列表" hidden></div></div></div>
+      </div>
       <div id="content"></div>
     </div>
   </main>

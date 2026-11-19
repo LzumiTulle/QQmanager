@@ -16,11 +16,21 @@ BLOCKS = [['08:00','09:40'],['10:00','11:40'],['14:00','15:40'],['16:00','17:40'
 def today(): return datetime.now(TZ).date()
 
 def migrate(s):
+    s.db.execute("""CREATE INDEX IF NOT EXISTS course_notice_candidates ON messages(id)
+        WHERE instr(content,'带')>0 OR instr(content,'准备好')>0""")
     s.db.executescript('''CREATE TABLE IF NOT EXISTS courses (
       id INTEGER PRIMARY KEY, payload TEXT NOT NULL, source_id INTEGER, fingerprint TEXT UNIQUE, deleted INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS planner_imports (
       id INTEGER PRIMARY KEY, file_id INTEGER, kind TEXT, result TEXT, applied INTEGER DEFAULT 0, created REAL);
     ''')
+
+    existing = {row['name'] for row in s.query('PRAGMA table_info(tasks)')}
+    for column in ('deadline','planned_date','planned_start','planned_end'):
+        if column not in existing:
+            s.db.execute('ALTER TABLE tasks ADD COLUMN '+column+' TEXT')
+
+    if 'deadline_reviewed' not in existing:
+        s.db.execute('ALTER TABLE tasks ADD COLUMN deadline_reviewed INTEGER NOT NULL DEFAULT 0')
 
 def config(s):
     return s.setting('academic_calendar') or {'name':'我的学期','anchor_date':today().isoformat(),'anchor_week':1,'total_weeks':20,'configured':False,'blocks':BLOCKS}
@@ -46,6 +56,7 @@ def week_one(c):
 def save_config(s,body):
     value=validate_config(body)
     with s.lock,s.db:
+        if 'class_name' not in body:value['class_name']=config(s).get('class_name','')
         if week_one(value)!=week_one(config(s)) and s.query('SELECT 1 FROM course_overrides LIMIT 1'):
             raise ValueError('已有按日期确认的调课，请先撤销调课，再调整校历周数对应关系')
         s.set_setting('academic_calendar',value)
@@ -103,6 +114,9 @@ def snapshot(s,day=None,span='week'):
     c=config(s); d=date.fromisoformat(day) if day else today();monday=d-timedelta(days=d.weekday());w=school_week(c,monday)
     from .reschedule import occurrences,list_changes
     courses=course_rows(s);days=[];effective=occurrences(s)
+    from .course_notices import match_notices, SEPARATE_ACTION
+    notices=match_notices(s,effective,c['blocks'])
+    attached={n['id'] for messages in notices.values() for n in messages if not SEPARATE_ACTION.search(n['content'])}
     start=monday
     length=7
     if span=='month':
@@ -113,13 +127,19 @@ def snapshot(s,day=None,span='week'):
         current=start+timedelta(days=n)
         lessons=[dict(x) for x in effective if x['date']==current.isoformat()]
         for x in lessons:
+            x['notices']=notices.get((x['id'],x['date']),[])
             x['start_time']=c['blocks'][(x['start_period']-1)//2][0]
             x['end_time']=c['blocks'][(x['end_period']-1)//2][1]
             x['time_note']='按大节显示' if x['start_period']%2==0 or x['end_period']%2==1 else ''
             x['conflict']=any((y['id'],y['source_date'])!=(x['id'],x['source_date']) and y['start_period']<=x['end_period'] and x['start_period']<=y['end_period'] for y in lessons)
         days.append(dict(date=current.isoformat(),weekday=current.weekday()+1,courses=sorted(lessons,key=lambda x:x['start_period'])))
     from .exams import snapshot as exam_snapshot
-    return dict(exams=exam_snapshot(s),config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=list_changes(s),
+    from .workflow import snapshot as workflow_snapshot
+    exam_data=exam_snapshot(s);changes=list_changes(s)
+    flow=workflow_snapshot(s,exam_data,changes,attached)
+    from .schedule import recommendations
+    suggestions=recommendations(s,flow,effective,c['blocks'])
+    return dict(suggestions=suggestions,workflow=flow,exams=exam_data,config=c,today=today().isoformat(),week=w,monday=monday.isoformat(),days=days,courses=courses,changes=changes,
                 unscheduled=[x for x in courses if x['enabled'] and x['weekday']==0 and w in x['weeks']])
 
 def table_columns(layout):
@@ -151,7 +171,7 @@ def extract_table(name,data,path):
         layout=recognize_layout(path)
         if not layout.get('text','').strip():raise ValueError('没有识别到文字，请换一张清晰的图片')
         # Normalized top-left coordinates retain weekday columns and period rows.
-        return json.dumps(table_columns(layout),ensure_ascii=False)[:90000]
+        return json.dumps(table_columns(layout),ensure_ascii=False)
     if suffix=='.xls':
         import xlrd
         with xlrd.open_workbook(file_contents=data,on_demand=True,logfile=io.StringIO()) as book:
@@ -196,9 +216,15 @@ def import_draft(s,name,data,kind='courses',caller=None):
     if not text.strip():raise ValueError('文件未提取到正文，请使用清晰图片或原始表格')
     cfg=s.setting('llm_config')
     if not cfg['enabled'] or s.setting('llm_test')!=signature(cfg):raise ValueError('请先在设置中启用模型，用于整理课表文字；也可以手动添加课程')
+    source=text
+    if Path(name).suffix.lower() in ('.png','.jpg','.jpeg','.webp'):
+        layout=json.loads(text)
+        source={k:layout[k] for k in ('columns','footer') if k in layout} or layout.get('lines') or layout.get('text','')
+        if len(json.dumps(source,ensure_ascii=False))>90000:raise ValueError('课表文字过多，请按学期或页拆分后导入')
     if not reserve_call(s,cfg):raise ValueError('已达到24小时模型调用上限')
     try:
-        result=(caller or request_json)(cfg,[{'role':'system','content':IMPORT_PROMPT},{'role':'user','content':json.dumps({'kind':kind,'current_calendar':config(s),'source':text},ensure_ascii=False)}],max_tokens=10000)
+        calendar={k:config(s)[k] for k in ('anchor_date','anchor_week','total_weeks','blocks')}
+        result=(caller or request_json)(cfg,[{'role':'system','content':IMPORT_PROMPT},{'role':'user','content':json.dumps({'kind':kind,'current_calendar':calendar,'source':source},ensure_ascii=False)}],max_tokens=10000)
     except ModelError as exc:
         raise ValueError(str(exc)) from None
     if not isinstance(result,dict) or not isinstance(result.get('courses',[]),list) or len(result.get('courses',[]))>200:raise ValueError('课表识别格式无效，请重试')

@@ -1,12 +1,17 @@
 import json
 import tempfile
 import unittest
+from datetime import date
+from unittest.mock import patch
 from qqmanager.store import Store
 from qqmanager import planner, matters, reschedule
 from qqmanager.llm import signature
 
 class RescheduleTests(unittest.TestCase):
     def setUp(self):
+        self.clock=patch.object(planner,'today',return_value=date(2026,11,16))
+        self.today=self.clock.start()
+        self.addCleanup(self.clock.stop)
         self.tmp=tempfile.TemporaryDirectory();self.s=Store(self.tmp.name)
         self.s.set_setting('academic_calendar',planner.validate_config(dict(anchor_date='2026-11-16',anchor_week=11,total_weeks=19)))
         self.s.set_setting('bridge_enabled',True);self.s.set_setting('bridge_groups',['12345']);self.s.set_setting('ws_account','67890')
@@ -103,6 +108,23 @@ class RescheduleTests(unittest.TestCase):
         self.assertEqual(self.s.query('SELECT state FROM schedule_changes ORDER BY id DESC')[0]['state'],'duplicate')
         self.assertEqual(len(reschedule.list_changes(self.s)),1)
         self.assertEqual(len(self.s.query('SELECT * FROM course_overrides')),2)
+
+    def test_stale_rows_and_unnamed_copy_of_applied_move(self):
+        cid=self.draft()
+        self.today.return_value=date(2026,11,19)
+        result=reschedule.review(self.s,cid)
+        self.assertTrue(result['rows'][0]['expired'])
+        self.assertTrue(result['ready'])
+        self.assertEqual(self.confirm(cid)['updated'],1)
+        duplicate=self.result()
+        duplicate['changes'][1].update(course='',location='D115@全体成员')
+        with self.s.db:
+            self.s.db.execute("""INSERT INTO schedule_changes(matter_id,source_key,source,state,payload,created)
+                SELECT matter_id,source_key||'copy',source,'pending',?,created FROM schedule_changes WHERE id=?""",
+                (json.dumps(duplicate),cid))
+        self.assertEqual([c['id'] for c in reschedule.list_changes(self.s)],[cid])
+        duplicate['changes'][1]['evidence']=[dict(message_id=999,quote='其他课程')]
+        self.assertIsNone(reschedule.previous_move(reschedule.applied_moves(self.s),result['matter_id'],duplicate['changes'][1]))
 
     def test_confirmation_routes_preserve_csrf_and_require_review_token(self):
         import threading,urllib.request,urllib.error
