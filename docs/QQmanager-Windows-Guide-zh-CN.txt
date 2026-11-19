@@ -79,6 +79,17 @@ Git 同步已提交并推送的项目文件。群聊、待办、附件、模型�
 
 五、交接存档
 
+Windows 本地接入适配（开发分支 codex/windows-native-local）
+  源码  https://github.com/LzumiTulle/QQmanager/tree/codex/windows-native-local
+  本地课表、资料库和待办可以直接使用。需要连接 QQ 时，先在 Windows QQ 客户端
+  完成登录，再在 QQmanager 中指定同一 QQ 号。首次启动、账号接入、重连和旧版
+  账号升级均不需要 Docker。登录二维码由 QQ 客户端显示。
+  自动收集需要已兼容的 LiteLoaderQQNT 环境。在「设置 → 桌面应用」安装或更新
+  项目插件，重启 QQ，再勾选需要收集的群。没有插件也可以手动导入记录。
+  旧托管账号升级后保留本机账号、选群和已归档内容，停用旧容器连接。
+  Windows 的深色窗口、放大的中文字号和桌面设置也在同一分支。下方 0.4.2
+  发布快照早于此次适配；验证本次改动请使用上面的开发分支。
+
 2026-11-19　Windows 0.4.2 的刷新进度显示和各项修复已合入 main。
   合入记录  https://github.com/LzumiTulle/QQmanager/pull/1
   发布快照  https://github.com/LzumiTulle/QQmanager/releases/tag/windows-v0.4.2
