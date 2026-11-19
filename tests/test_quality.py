@@ -78,8 +78,61 @@ class GroupingTests(unittest.TestCase):
         self.assertEqual(self.s.search('messages')[1]['analysis_state'],'filtered')
         rows=self.s.search('insights');self.assertEqual(len(rows),1);self.assertEqual(rows[0]['merged_count'],2)
         self.assertEqual(self.s.query('PRAGMA foreign_key_check'),[])
+    def test_full_review_recovers_old_omissions_and_protects_human_decisions(self):
+        self.emit(1,'请提交作业一')
+        self.emit(2,'请提交作业二')
+        self.emit(3,'请提交作业三')
+        ids=[r['id'] for r in self.s.query('SELECT id FROM messages ORDER BY id')]
+        kept=self.s.query('SELECT id FROM insights WHERE message_id=?',(ids[1],))[0]['id']
+        self.s.create_task(dict(title='我改过的标题',insight_id=kept))
+        with self.s.db:
+            self.s.db.execute("UPDATE analysis_jobs SET state='done',policy_version=999,finished=1")
+            self.s.db.execute("UPDATE insights SET quality_reason='旧规则漏报' WHERE message_id!=?",(ids[1],))
+            self.s.db.execute("UPDATE analysis_jobs SET account='other' WHERE message_id=?",(ids[2],))
+        self.assertEqual(self.s.reanalyze(full=True),{'reviewed':2,'queued':1})
+        self.assertEqual(self.s.reanalyze(full=True)['queued'],0)
+        self.assertEqual([r['title'] for r in self.s.snapshot()['tasks']],['我改过的标题'])
+        self.assertEqual([r['message_id'] for r in self.s.query("SELECT message_id FROM insights WHERE quality_reason='' ORDER BY message_id")],ids[:2])
+
+    def test_review_progress_tracks_only_this_batch_and_survives_restart(self):
+        import threading
+        import time
+        from unittest.mock import patch
+        from qqmanager.review import HistoryReview
+        self.emit(1,'请提交作业')
+        self.emit(2,'请提交报告')
+        review=HistoryReview(self.s)
+        entered,release=threading.Event(),threading.Event()
+        original=self.s.reanalyze
+        def paused(**kwargs):
+            kwargs['progress'](1,2)
+            entered.set()
+            release.wait(3)
+            return original(**kwargs)
+        with patch.object(self.s,'reanalyze',side_effect=paused):
+            first=review.start()
+            try:
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(review.start()['run'],first['run'])
+                self.assertEqual(review.status()['reviewed'],1)
+            finally:
+                release.set()
+            end=time.monotonic()+3
+            while review.status()['phase']=='scanning' and time.monotonic()<end:
+                time.sleep(.01)
+        self.emit(3,'另一个任务')
+        self.assertEqual(review.status()['queued'],2)
+        with self.s.db:
+            self.s.db.execute("UPDATE analysis_jobs SET filter_reason='等待模型启用' WHERE review_run IS NOT NULL")
+        self.assertTrue(review.status()['waiting_only'])
+        with self.s.db:
+            self.s.db.execute("UPDATE analysis_jobs SET state=CASE WHEN message_id=1 THEN 'done' ELSE 'failed' END WHERE review_run IS NOT NULL")
+        final=review.status()
+        self.assertEqual((final['phase'],final['processed'],final['failed']),('finished',2,1))
+        self.assertEqual(HistoryReview(self.s).status(),final)
+
     def test_review_retires_stale_results_but_preserves_raw_and_tasks(self):
-        self.enable(self.good);self.emit(1,'通知：明天10点在A会议室开会。')
+        self.enable(self.good);self.emit(1,'通知：明天10点在A会议室开会，具体议程群内商量。')
         worker=Analyzer(self.s,self.good);worker.step()
         original=self.s.search('messages')
         self.s.db.execute('UPDATE analysis_jobs SET policy_version=0');self.s.db.commit()

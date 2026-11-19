@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, quote, urlparse
 from .store import Store
 from .connector import Connector, validate_url
 from .llm import Analyzer, save_config, test_connection
+from .napcat_login import NapCatLogin, QQBinding
 from .native import NativeBridge
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -95,6 +96,13 @@ def make_server(store, port=8765, connector=None):
     csrf = secrets.token_urlsafe(32)
     connector = connector or Connector(store)
     native = NativeBridge(store)
+    napcat_login = NapCatLogin()
+    from .review import HistoryReview
+    history_review = HistoryReview(store)
+    qq_binding = QQBinding(store, connector)
+    if store.setting('qq_managed_login') and store.setting('ws_enabled'):
+        qq_binding.runtime.remember_account(store.setting('ws_account'))
+        qq_binding.runtime.prepare()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):
@@ -143,9 +151,19 @@ def make_server(store, port=8765, connector=None):
                         self.send({'error': '会话无效'}, 403)
                         return
                     self.send({'data_directory': str(store.directory)})
+                elif url.path == '/api/review':
+                    self.send(history_review.status())
                 elif url.path == '/api/state':
                     q = parse_qs(url.query)
                     self.send(store.snapshot(q.get('q', [''])[0], q.get('group', [''])[0]))
+                elif url.path == '/api/backfill':
+                    self.send(store.backfill_receipts(int(parse_qs(url.query).get('before',['0'])[0])))
+                elif url.path == '/api/library':
+                    params = dict(parse_qs(url.query))
+                    def param(name, default=''):
+                        return params.get(name, [default])[0]
+                    self.send(store.library(param('type'), param('q'), param('group'),
+                                            param('day'), int(param('offset', '0'))))
                 elif url.path == '/api/overview':
                     from .overview import snapshot
                     params=parse_qs(url.query)
@@ -154,11 +172,13 @@ def make_server(store, port=8765, connector=None):
                     from .media import for_message
                     mid=int(url.path.rsplit('/',1)[1]);rows=store.query('SELECT * FROM messages WHERE id=?',(mid,))
                     if not rows:self.send({'error':'消息不存在'},404);return
-                    self.send(dict(rows[0],attachments=for_message(store,mid)))
+                    links=store.query('''SELECT DISTINCT mm.matter_id FROM matter_members mm
+                        JOIN insights i ON mm.insight_id=i.id WHERE i.message_id=?''',(mid,))
+                    self.send(dict(rows[0],matter_ids=[row['matter_id'] for row in links],attachments=for_message(store,mid)))
                 elif url.path == '/api/connector':
-                    self.send(dict(connector.snapshot(), enabled=store.setting('ws_enabled'), url=store.setting('ws_url'),
+                    self.send(dict(connector.snapshot(), enabled=store.setting('ws_enabled'), managed=bool(store.setting('qq_managed_login')), url=store.setting('ws_url'),
                                    configured=bool(store.setting('ws_token')), selected=store.setting('bridge_groups'),
-                                   selected_account=store.setting('ws_account'), collecting=store.setting('bridge_enabled')))
+                                   selected_account=store.setting('ws_account'), login_revision=store.setting('qq_login_revision') or '', collecting=store.setting('bridge_enabled')))
                 elif url.path == '/api/native':
                     self.send(native.snapshot())
                 elif url.path == '/api/planner':
@@ -195,7 +215,7 @@ def make_server(store, port=8765, connector=None):
                         return
                     row = rows[0]
                     self.send((store.blobs / row['digest']).read_bytes(), content_type='application/octet-stream', headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(row['name'])})
-                elif url.path in ('/', '/app.js', '/filter-model.js', '/planner-model.js', '/planner.js', '/style.css'):
+                elif url.path in ('/', '/app.js', '/filter-model.js', '/planner-model.js', '/planner.js', '/schedule.js', '/style.css'):
                     file = ROOT / 'web' / ('index.html' if url.path == '/' else url.path[1:])
                     self.send(file.read_bytes(), content_type=mimetypes.guess_type(str(file))[0] + '; charset=utf-8')
                 else:
@@ -230,6 +250,15 @@ def make_server(store, port=8765, connector=None):
                 result = {'ok': True}
                 if self.path == '/api/native/heartbeat':
                     result = native.heartbeat(body)
+                elif self.path == '/api/qq/logout':
+                    qq_binding.logout(body.get('account'), body.get('revision', ''))
+                    with napcat_login.lock:
+                        napcat_login.credential = ''
+                        napcat_login.expires = 0
+                elif self.path == '/api/qq/bind':
+                    result = qq_binding.update(body)
+                elif self.path == '/api/connector/qq-login':
+                    result = napcat_login.update(body)
                 elif self.path == '/api/native/events':
                     result = native.events(body)
                 elif self.path == '/api/native/attachment':
@@ -243,9 +272,11 @@ def make_server(store, port=8765, connector=None):
                 elif self.path == '/api/native/settings':
                     store.set_setting('native_enabled', bool(body.get('enabled')))
                 elif self.path == '/api/native/groups':
-                    result = native.select_groups(body.get('groups'), body.get('names'))
+                    result = native.select_groups(body.get('groups'), body.get('names'), body.get('start_dates'), body.get('start_grants'))
                 elif self.path == '/api/native/groups/refresh':
                     result = native.refresh_groups()
+                elif self.path == '/api/native/history/start':
+                    result = native.start_history(body)
                 elif self.path == '/api/native/pair':
                     account = str(body.get('account') or store.setting('ws_account'))
                     groups = body.get('groups', store.setting('bridge_groups'))
@@ -266,11 +297,32 @@ def make_server(store, port=8765, connector=None):
                     else:
                         data = base64.b64decode(body.get('data', ''), validate=True)
                     result = store.import_data(str(body.get('name', '聊天记录.txt')), data, body.get('group_name'), body.get('mode', 'chat'))
+                elif self.path == '/api/tasks/arrange':
+                    if not isinstance(body.get('plan'),dict):
+                        raise ValueError('请核对计划日期和时间')
+                    task_id = body.get('task_id')
+                    if task_id:
+                        store.update_task(int(task_id),body)
+                    else:
+                        task_id = store.create_task(body)
+                    result = {'id':task_id}
                 elif self.path == '/api/tasks':
                     result = {'id': store.create_task(body)}
+                elif self.path == '/api/planner/plan':
+                    from .schedule import save
+                    result = {'id': save(store,body)}
+                elif self.path == '/api/planner/exam/confirm':
+                    from .exams import confirm
+                    result = confirm(store,body)
+                elif self.path == '/api/workflow/decision':
+                    from .workflow import decide
+                    decide(store,body)
+                elif self.path == '/api/tasks/restore-merge':
+                    from .workflow import restore_merge
+                    restore_merge(store,body['id'])
                 elif self.path == '/api/matter':
                     from .matters import update
-                    update(store,body)
+                    result=update(store,body)
                 elif self.path == '/api/planner/calendar':
                     from .planner import save_config as save_calendar
                     save_calendar(store,body)
@@ -303,6 +355,9 @@ def make_server(store, port=8765, connector=None):
                         raise ValueError('无效状态')
                     with store.lock, store.db:
                         store.update_insight(int(body['id']),body['status'])
+                elif self.path == '/api/identity':
+                    from .identity import save_profile
+                    result = save_profile(store,body)
                 elif self.path == '/api/settings':
                     if 'bridge_groups' in body:
                         groups = body['bridge_groups']
@@ -315,6 +370,8 @@ def make_server(store, port=8765, connector=None):
                     if 'interests' in body:
                         store.set_setting('interests', str(body['interests'])[:1000])
                         store.reanalyze()
+                elif self.path == '/api/review':
+                    result=history_review.start()
                 elif self.path == '/api/llm/review':
                     from .llm import queue_review
                     result=queue_review(store)
@@ -337,6 +394,8 @@ def make_server(store, port=8765, connector=None):
                         raise ValueError('请填写 NapCat WebSocket Token')
                     if '\r' in token or '\n' in token:
                         raise ValueError('凭据不能包含换行')
+                    if url != store.setting('ws_url') or token != store.setting('ws_token'):
+                        store.set_setting('qq_managed_login', False)
                     store.set_setting('ws_url', url)
                     store.set_setting('ws_token', token)
                     store.set_setting('ws_enabled', bool(body.get('enabled')))
@@ -344,7 +403,7 @@ def make_server(store, port=8765, connector=None):
                 elif self.path == '/api/connector/refresh':
                     connector.refresh_requested.set()
                 elif self.path == '/api/connector/groups':
-                    connector.select_groups(body.get('groups'))
+                    connector.select_groups(body.get('groups'),body.get('start_dates'))
                 elif self.path == '/api/watches':
                     store.add_watch(body)
                 elif self.path == '/api/watch-toggle':
@@ -353,6 +412,10 @@ def make_server(store, port=8765, connector=None):
                 elif self.path == '/api/notifications/read':
                     with store.lock, store.db:
                         store.db.execute('UPDATE notifications SET seen=1 WHERE id=?', (int(body['id']),))
+                elif self.path == '/api/messages/read':
+                    store.read_messages(body.get('ids'))
+                elif self.path == '/api/backfill/read':
+                    store.read_backfill(body.get('ids'))
                 elif self.path == '/api/onebot':
                     result = store.onebot(body)
                 else:

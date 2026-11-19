@@ -142,3 +142,72 @@ test('attachment worker downloads only selected message media and repairs known 
   assert.equal(recovered.length,1);assert.equal(recovered[0].recovery,true);
  }finally{await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('reopen replays multiple offline pages, retries a lost acknowledgement, and includes equal-time IDs',async()=>{
+ const {syncHistory}=require('../plugins/qqmanager-native/media.cjs');
+ const rows=Array.from({length:235},(_,i)=>({...message(),msgId:String(i+1),msgSeq:String(i+1),msgTime:now-500+Math.floor(i/3)}));
+ const scope={group_id:'123456',grant_id:'selected',since:rows[7].msgTime,cursor:0};
+ const database=new Set([rows.at(-1).msgId]); // Live push arrived first.
+ const delivered=new Set(),commits=[];
+ const service={
+  async getAioFirstViewLatestMsgs(){return {msgList:rows.slice(-35)};},
+  async getMsgsIncludeSelf(peer,id,count){assert.equal(peer.peerUid,scope.group_id);return {msgList:rows.slice(Math.max(0,Number(id)-count),Number(id))};}
+ };
+ let drop=true;
+ async function request(route,{events,history}){
+  assert.equal(route,'/api/native/events');
+  if(!events.length){commits.push(history.through);return {ok:true};}
+  assert.ok(events.length<=20);
+  const added=events.filter(x=>!database.has(x.message_id)).map(x=>x.message_id);
+  added.forEach(id=>database.add(id));
+  if(drop){drop=false;throw Error('lost response');}
+  return {ok:true,new_ids:added};
+ }
+ const scan=()=>syncHistory(service,'777777',scope,()=>true,request,(_,e)=>delivered.add(e.message_id));
+ await assert.rejects(scan(),/lost response/);
+ assert.deepEqual(commits,[]);
+ await scan();
+ const expected=rows.filter(x=>x.msgTime>=scope.since);
+ assert.deepEqual([...database].sort(),expected.map(x=>x.msgId).sort());
+ assert.deepEqual(commits,[rows.at(-1).msgTime]);
+ scope.cursor=commits[0];
+ await scan();
+ assert.equal(database.size,expected.length);
+ assert.ok(!delivered.has(rows.at(-1).msgId));
+});
+
+test('authorization changes and missing offline history cannot advance a checkpoint',async()=>{
+ const {syncHistory}=require('../plugins/qqmanager-native/media.cjs');
+ const scope={group_id:'123456',grant_id:'selected',since:now-7200,cursor:now-3600};
+ let enabled=true,posted=0;
+ const service={async getAioFirstViewLatestMsgs(){enabled=false;return {msgList:[message()]};}};
+ const request=async()=>{posted++;return {ok:true,new_ids:[]};};
+ await assert.rejects(syncHistory(service,'777777',scope,()=>enabled,request,()=>{}),/scope changed/);
+ assert.equal(posted,0);
+ await assert.rejects(syncHistory({getAioFirstViewLatestMsgs:async()=>({msgList:[]})},
+  '777777',scope,()=>true,request,()=>{}),/history gap/);
+ assert.equal(posted,0);
+});
+
+test('a -2 first view needs a successful local history read to confirm an empty group',async()=>{
+ const {syncHistory}=require('../plugins/qqmanager-native/media.cjs');
+ const scope={group_id:'123456',grant_id:'allowed',since:now-3600,cursor:0};
+ const service={getAioFirstViewLatestMsgs:async()=>({result:-2}),getLatestDbMsgs:async()=>({result:0,msgList:[]})};
+ const reports=[],commits=[];
+ const scan=()=>syncHistory(service,'777777',scope,()=>true,async(route,body)=>{
+  commits.push(body.history.through);return {ok:true};
+ },()=>{},(method,result)=>reports.push([method,result]));
+ await scan();
+ assert.deepEqual(commits,[0]);
+ assert.deepEqual(reports,[['getAioFirstViewLatestMsgs','qq:-2'],['getLatestDbMsgs','empty']]);
+ service.getLatestDbMsgs=async()=>({result:-2,msgList:[]});
+ await assert.rejects(scan());
+ assert.deepEqual(commits,[0]);
+});
+
+test('a shared activity card stores the visible title and omits its link and payload',()=>{
+ const card={meta:{detail_1:{title:'学生活动',url:'https://example.invalid/private'}}};
+ const row={...message(),elements:[{arkElement:{bytesData:JSON.stringify(card)}}]};
+ assert.deepEqual(normalizeMessage(row,'777777',new Set(['123456']),now).message,
+   [{type:'text',data:{text:'[分享卡片] 学生活动'}}]);
+});

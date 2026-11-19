@@ -3,3 +3,4 @@ xlrd==2.0.2
 websocket-client==1.9.0
 certifi==2026.10.23
 tzdata; platform_system == "Windows"
+segno==1.6.6

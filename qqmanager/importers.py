@@ -40,7 +40,18 @@ def segments(value):
         if typ == 'text':
             parts.append(str(data.get('text', '')))
         elif typ == 'at':
-            parts.append('@' + str(data.get('qq', '')))
+            parts.append('@全体成员' if data.get('qq')=='all' else '@' + str(data.get('qq', '')))
+        elif typ == 'json':
+            raw = data.get('data')
+            try:
+                card = json.loads(raw) if isinstance(raw,str) else raw
+                news = (card.get('meta') or {}).get('news') or {}
+                title = news.get('title') or card.get('prompt')
+            except (ValueError,AttributeError):
+                title = None
+            parts.append(('[分享卡片] ' + str(title or '')[:300]).strip())
+        elif typ in ('face','mface','bface','sface','sticker'):
+            parts.append('[表情]')
         elif typ == 'file':
             parts.append('[文件：' + str(data.get('name', data.get('file', '未知文件'))) + ']')
         elif typ == 'image':

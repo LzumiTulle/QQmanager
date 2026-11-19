@@ -4,6 +4,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 os.environ['PYINSTALLER_CONFIG_DIR']=str(ROOT/'build/pyinstaller-cache')
 extra=['--add-data',str(ROOT/'native-tools/ocr.ps1')+(';' if sys.platform=='win32' else ':')+'native-tools']
+extra+=['--add-data',str(ROOT/'scripts/napcat-entrypoint.sh')+(';' if sys.platform=='win32' else ':')+'scripts']
 if sys.platform=='darwin':
     helper=ROOT/'build/native-tools/qqmanager-ocr';helper.parent.mkdir(parents=True,exist_ok=True)
     subprocess.run(['xcrun','swiftc','-module-cache-path',str(ROOT/'build/swift-module-cache'),str(ROOT/'native-tools/ocr.swift'),'-O','-o',str(helper)],check=True)

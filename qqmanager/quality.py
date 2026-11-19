@@ -3,7 +3,7 @@ import re
 from datetime import timedelta
 from .analysis import timestamp
 
-POLICY_VERSION = 3
+POLICY_VERSION = 5
 
 def readable(text):
     return re.sub(r'\[[^\]\n]{0,40}[：:]未解析\]', '', str(text)).strip()
@@ -12,11 +12,13 @@ def noise_reason(text):
     text = readable(text)
     # A mixed message can contain a real instruction alongside a bot quotation.
     actionable = bool(re.search(r'(?:通知|公告|请|务必|必须|需要).{0,45}(?:提交|填写|缴费|停课|停电|维护|开会|集合|报名|更新)', text, re.S))
+    if re.fullmatch(r'(?:\[表情\]\s*)+', text):
+        return '仅表情'
     if not re.search(r'[\w\u4e00-\u9fff]', text):
         return '无可解析正文'
     if re.fullmatch(r'(?:@\S+\s*)?[/!！.](?:今日运势|运势|签到|抽卡|互动|随机\S*|今日老婆|今日老公|今日猪猪)(?:\s.*)?', text):
         return '机器人娱乐指令'
-    if re.fullmatch(r'@\S+', text):
+    if re.fullmatch(r'@\S+', text) and not (text.startswith('@全体成员') and len(text)>5):
         return '仅提及成员'
     fortune = sum(bool(re.search(p, text)) for p in (r'财运\s*[:：]\s*\d+', r'桃花运\s*[:：]\s*\d+', r'事业运\s*[:：]\s*\d+'))
     if not actionable and (fortune >= 2 or re.search(r'(?:您|你).{0,4}(?:今日|今天)的?运势|(?:今日|今天)运势[：:]|免艾特游玩|抽卡结果|抓到一只.{0,12}猪', text)):
