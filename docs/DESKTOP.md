@@ -82,7 +82,7 @@ Windows 安装器只安装 QQmanager，不修改 QQ。QQ 自动接入需兼容�
 - 文件、待办：各自检索和管理。原始记录、接入和设置放在导航下方。
 - 页面支持窄屏布局；这不代表已提供手机服务或开放局域网。当前后端仍只监听本机回环地址。
 
-Windows 首屏可以打开本机 QQ，在 QQ 的窗口完成登录，然后在 QQmanager 中填写同一 QQ 号。也可直接进入本地课表和资料库。要收集群消息，在已有兼容 LiteLoaderQQNT 的电脑上，从「设置 → 桌面应用」安装插件，重启 QQ 后选择收集的群。Windows 的启动和接入流程均无需 Docker；旧托管账号升级时会停用旧容器连接，保留账号、选群和历史资料。
+Windows 首屏可以打开本机 QQ。登录后回到 QQmanager 核对识别到的账号，也可以手动填写。已有兼容 LiteLoaderQQNT 的电脑，可在保存账号时勾选「同时安装或更新 QQ 消息插件」。重启 QQ 后选择收集的群。只用课表和资料库可以直接进入本地功能。Windows 启动和接入均无需 Docker。旧托管账号升级时会停用旧容器连接，保留账号、选群和历史资料。
 
 Mac 仍可用手机 QQ 扫码绑定，托管扫码使用 Docker Desktop 或 OrbStack 运行登录组件。已绑定的桌面 QQ 插件用户可直接使用。部署边界见 [轻量化与移动端边界](LIGHTWEIGHT.md)。
 
@@ -92,7 +92,7 @@ Mac 仍可用手机 QQ 扫码绑定，托管扫码使用 Docker Desktop 或 OrbS
 
 保留原桌面版数据目录：Mac 为 `~/Library/Application Support/QQmanager`，Windows 为 `%APPDATA%/QQmanager`。若本机已有 QQmanager 服务，则先验证身份并复用数据目录。升级前退出旧桌面程序；卸载旧外壳时不要删除应用数据。
 
-Windows「设置 → 桌面应用」里的“安装 / 更新 QQ 消息插件”可选择已有 LiteLoaderQQNT 用户目录（包含 plugins 与 data），安装插件并写入配对配置。先在接入页保存 QQ 账号；不会自动安装加载器或更改 QQ 校验。加载器仍需对照用户 QQ 版本验证。
+Windows「设置 → 桌面应用」里的「安装 / 更新 QQ 消息插件」使用已保存的账号配对，自动查找 LiteLoaderQQNT 用户目录。自定义目录可手选一次，安装成功后会记住。当前 QQ 需已启用兼容加载器。
 
 常用群筛选只列当前收集名单；已移除群的旧消息仍在“原始记录”的历史群筛选中。
 

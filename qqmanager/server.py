@@ -159,6 +159,19 @@ def make_server(store, port=8765, connector=None):
                         return
                     from .windows_accounts import active_accounts
                     self.send({'accounts': active_accounts()})
+                elif url.path == '/api/native/install-config' and not managed_supported:
+                    if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
+                        self.send({'error': '会话无效'}, 403)
+                        return
+                    with store.lock:
+                        account = store.setting('ws_account')
+                        if not account:
+                            self.send({'error': '请先保存要绑定的 QQ 账号。'}, 409)
+                            return
+                        config = dict(url=f'http://127.0.0.1:{self.server.server_port}/',
+                                      account=account, token=store.setting('native_token'),
+                                      groups=store.setting('bridge_groups'))
+                    self.send(config)
                 elif url.path == '/api/desktop':
                     if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
                         self.send({'error': '会话无效'}, 403)

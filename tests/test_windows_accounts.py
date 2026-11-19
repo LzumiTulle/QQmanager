@@ -111,3 +111,20 @@ class ActiveAccountsEndpointTests(unittest.TestCase):
             self.assertEqual(self.get('/api/qq/active-accounts', {'X-CSRF-Token': csrf}),
                              {'accounts': ['12345', '345678']})
         active.assert_called_once_with()
+
+    def test_installer_config_uses_bound_account_and_preserves_pause(self):
+        path = '/api/native/install-config'
+        with self.assertRaises(urllib.error.HTTPError) as forbidden:
+            self.get(path)
+        self.assertEqual(forbidden.exception.code, 403)
+        headers = {'X-CSRF-Token': self.get('/api/session')['csrf']}
+        with self.assertRaises(urllib.error.HTTPError) as unbound:
+            self.get(path, headers)
+        self.assertEqual(unbound.exception.code, 409)
+        self.store.set_setting('ws_account', '123456')
+        self.store.set_setting('bridge_groups', ['654321'])
+        config = self.get(path, headers)
+        self.assertEqual(config, dict(account='123456', groups=['654321'], url=self.url + '/',
+                                      token=self.store.setting('native_token')))
+        self.assertFalse(self.store.setting('native_enabled'))
+        self.assertFalse(self.store.setting('bridge_enabled'))

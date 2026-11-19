@@ -672,7 +672,8 @@ function localQQAccountForm(id = 'local-qq-account-form') {
   const openQQ = desktopInvoke
     ? '<button type="button" data-desktop="open-qq">打开本机 QQ</button>'
     : '<small>请在此 Windows 设备登录 QQ 后返回这里确认账号；也可以手动填写。</small>';
-  return `<form id="${id}" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" autocomplete="username" required></label><div class="inline-actions"><button type="button" data-local-account-detect>识别正在运行的 QQ</button>${openQQ}</div><div class="local-account-detection" hidden><label>检测到的 QQ<select name="detected-account" aria-label="选择检测到的 QQ 账号"></select></label></div><p class="help" data-local-account-status>可手动填写；识别只读取本机正在运行的 QQ 账号，不会联网登录或启用收集。</p><button class="primary" type="submit">保存账号并继续</button><small>账号只保存在这台电脑。保存后安装 QQ 客户端插件，插件会复用当前 QQ 的登录状态。</small></form>`;
+  const installOption = desktopInvoke ? '<label class="checkbox-label"><input type="checkbox" name="installPlugin">同时安装或更新 QQ 消息插件</label>' : '';
+  return `<form id="${id}" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" autocomplete="username" required></label><div class="inline-actions"><button type="button" data-local-account-detect>识别正在运行的 QQ</button>${openQQ}</div><div class="local-account-detection" hidden><label>检测到的 QQ<select name="detected-account" aria-label="选择检测到的 QQ 账号"></select></label></div><p class="help" data-local-account-status>可手动填写；识别只读取本机正在运行的 QQ 账号，不会联网登录或启用收集。</p>${installOption}<button class="primary" type="submit">保存账号并继续</button><small>安装插件需要本机 QQ 已启用 LiteLoaderQQNT。</small></form>`;
 }
 function setupLocalQQAccountForm(form) {
   if (!form || form.dataset.accountDetectionReady) return;
@@ -732,11 +733,17 @@ async function detectActiveQQAccounts(form, force = false) {
   }
 }
 async function saveLocalQQAccount(form) {
+  const installPlugin = form.elements.installPlugin?.checked;
   const account = String(new FormData(form).get('account') || '').trim();
   if (!/^[0-9]{5,20}$/.test(account)) throw new Error('QQ 账号应为 5–20 位数字');
   await api('/api/qq/native-account', {account, revision:connectorState?.login_revision || ''});
   nativeDraft = null;
   await refreshConnector(true);
+  toast('QQ 账号已保存。');
+  if (installPlugin) {
+    try { await desktopInvoke('desktop_action', {action:'plugin'}); }
+    catch (error) { toast('账号已保存，插件安装助手未能打开：' + String(error)); }
+  }
 }
 function accountPanel() {
   const c = connectorState;
@@ -1180,7 +1187,6 @@ document.addEventListener('submit',async event=>{
       await saveLocalQQAccount(form);
       connectionTab = 'qq';
       await refresh();
-      toast('QQ 账号已保存。请安装客户端插件后重启 QQ。');
     }else if(form.id==='native-groups-form'){
       await api('/api/native/pair',{account:data.get('account').trim(),groups:[...ensureNativeDraft().selected]});nativeDraft=null;await refresh();await refreshConnector(true);toast('绑定账号已保存');
     }else if(form.id==='model-form'){
@@ -1286,7 +1292,6 @@ async function checkStartupAccount(resumeScan = false) {
           connectionTab = 'qq';
           enterWorkspace();
           setView('connections');
-          toast('QQ 账号已保存。请安装客户端插件后重启 QQ。');
         } catch (error) {
           toast(error.message);
           submit.disabled = false;
