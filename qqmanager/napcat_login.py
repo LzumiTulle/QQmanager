@@ -105,15 +105,19 @@ class NapCatLogin:
 
 
 class QQBinding:
-    def __init__(self, store, connector):
-        from .login_runtime import LoginRuntime
+    def __init__(self, store, connector, *, managed_supported=True):
         self.store = store
         self.connector = connector
-        self.runtime = LoginRuntime(store.directory)
+        self.runtime = None
+        if managed_supported:
+            from .login_runtime import LoginRuntime
+            self.runtime = LoginRuntime(store.directory)
         self.login = NapCatLogin()
         self.lock = threading.Lock()
 
     def update(self, body):
+        if self.runtime is None:
+            raise ValueError('Windows 版请连接本机 QQ，或先使用本地功能。')
         with self.lock:
             if body.get('revision', '') != (self.store.setting('qq_login_revision') or ''):
                 return {'state': 'expired', 'message': '账号状态已更新，请重新打开登录窗口。'}
@@ -136,7 +140,7 @@ class QQBinding:
                 return
             if account != current or revision != (self.store.setting('qq_login_revision') or ''):
                 raise ValueError('账号状态已更新，请重新打开设置。')
-            if self.store.setting('qq_managed_login'):
+            if self.runtime is not None and self.store.setting('qq_managed_login'):
                 self.runtime.remember_account('')
             values = {
                 'ws_account': '', 'bridge_groups': [], 'bridge_enabled': False,

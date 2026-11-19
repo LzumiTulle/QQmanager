@@ -26,7 +26,18 @@
     <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
     <symbol id="icon-read" viewBox="0 0 24 24"><path d="m3 12 4 4L17 6 M12 16l9-10"/></symbol>
   </defs></svg>
-  <aside class="sidebar">
+  <section id="login-screen" aria-labelledby="login-title">
+    <button id="login-desktop" hidden>桌面设置</button>
+    <div class="login-card">
+      <div class="login-brand"><span class="brand-icon" aria-hidden="true">Q</span>QQmanager</div>
+      <h1 id="login-title">连接 QQ</h1>
+      <p id="login-intro" role="status">正在检查本机绑定的 QQ 账号…</p>
+      <button id="login-start" class="primary" hidden>获取登录二维码</button>
+      <div id="login-scan"></div>
+      <button id="login-local" hidden>先使用本地功能</button>
+    </div>
+  </section>
+  <aside class="sidebar" hidden>
     <a href="#home" class="brand"><span class="brand-icon">Q</span>QQmanager</a>
     <nav aria-label="主导航">
       <button data-view="home"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-calendar"></use></svg>日程表</button>
@@ -38,7 +49,7 @@
       <button id="analysis-status" class="status-button sidebar-status" data-view="settings">本地识别</button><div class="theme-switch" role="group" aria-label="外观"><button data-theme-choice="light" aria-pressed="true">浅色</button><button data-theme-choice="dark" aria-pressed="false">深色</button></div>
     </div>
   </aside>
-  <main>
+  <main hidden>
     <header class="topbar"><h1 id="page-title">信息</h1><div class="top-actions"><button id="review-button" data-action="review-history" title="复查历史消息并更新日程建议">刷新</button><button id="notifications-button" aria-label="查看提醒"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-bell"></use></svg>提醒<span id="notification-count"></span></button><button class="primary" id="import-button" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-upload"></use></svg><span id="import-label">导入记录</span></button><button class="primary" id="new-task-button" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-plus"></use></svg>新建待办</button></div></header>
     <div class="page">
       <section id="review-status" hidden aria-label="刷新状态">

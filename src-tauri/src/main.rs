@@ -12,15 +12,19 @@ use std::{
     time::Duration,
 };
 use tauri::{
-    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu},
+    menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WebviewUrl, WebviewWindowBuilder,
 };
+#[cfg(not(windows))]
+use tauri::menu::Submenu;
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 mod windows_setup;
+#[cfg(windows)]
+mod windows_theme;
 const ORIGIN: &str = "http://127.0.0.1:8765";
 fn client() -> reqwest::blocking::Client {
     reqwest::blocking::Client::builder()
@@ -231,11 +235,58 @@ fn native_menu(app: &tauri::AppHandle, s: &Arc<Service>) -> tauri::Result<Menu<t
         ],
     )
 }
+fn desktop_operation(app: &tauri::AppHandle, action: &str, enabled: Option<bool>) -> Result<bool, String> {
+    let service = app.state::<Arc<Service>>();
+    let auto_start = || service.prefs.lock().unwrap()["autoStart"].as_bool().unwrap_or(false);
+    match action {
+        "status" => {}
+        "show" => show(app),
+        #[cfg(windows)]
+        "open-qq" => windows_setup::open_qq()?,
+        "quit" => { service.stop(); app.exit(0); }
+        "data" => app.opener().open_path(service.data.to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?,
+        "help" => app.opener().open_url("https://github.com/LzumiTulle/QQmanager#readme", None::<&str>).map_err(|e| e.to_string())?,
+        "plugin" => {
+            #[cfg(target_os = "macos")]
+            app.opener().open_path(app.path().resource_dir().map_err(|e| e.to_string())?.join("QQmanager Installer.app").to_string_lossy(), None::<&str>).map_err(|e| e.to_string())?;
+            #[cfg(not(target_os = "macos"))]
+            windows_setup::choose(app.clone());
+        }
+        "auto" => {
+            let current = auto_start();
+            let desired = enabled.unwrap_or(!current);
+            let result = if desired { app.autolaunch().enable() } else { app.autolaunch().disable() };
+            if result.is_ok() {
+                service.prefs.lock().unwrap()["autoStart"] = json!(desired);
+                service.save();
+            }
+            if let Some(item) = app.state::<Menu<tauri::Wry>>().get("auto") {
+                item.as_check_menuitem_unchecked().set_checked(auto_start()).map_err(|e| e.to_string())?;
+            }
+            result.map_err(|e| e.to_string())?;
+        }
+        _ => return Err("未知的桌面操作".into()),
+    }
+    Ok(auto_start())
+}
+
+#[cfg(windows)]
+#[tauri::command]
+fn desktop_action(window: tauri::WebviewWindow, action: String, enabled: Option<bool>) -> Result<bool, String> {
+    if window.label() != "main" || !local(&window.url().map_err(|e| e.to_string())?) {
+        return Err("此操作仅限 QQmanager 主窗口".into());
+    }
+    desktop_operation(window.app_handle(), &action, enabled)
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let autostart = tauri_plugin_autostart::Builder::new().args(["--background"]);
     #[cfg(target_os = "macos")]
     let autostart = autostart.macos_launcher(tauri_plugin_autostart::MacosLauncher::LaunchAgent);
-    let app=tauri::Builder::default()
+    let builder=tauri::Builder::default();
+    #[cfg(windows)]
+    let builder=builder.invoke_handler(tauri::generate_handler![desktop_action]);
+    let app=builder
  .plugin(tauri_plugin_single_instance::init(|app,_,_|show(app)))
  .plugin(autostart.build())
  .plugin(tauri_plugin_opener::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_notification::init())
@@ -247,11 +298,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
   let auto_ok=result.is_ok();service.prefs.lock().unwrap()["autoStart"]=json!(auto&&auto_ok);service.save();
   if let Err(e)=result {error(&handle,format!("开机启动设置失败，可稍后从菜单重试：{e}"));}
   let menu=native_menu(&handle,&service)?;
+  app.manage(menu.clone());
+  #[cfg(not(windows))]
+  {
   let app_menu=Menu::with_items(app,&[&Submenu::with_items(app,"QQmanager",true,&menu.items()?.iter().map(|x|x as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect::<Vec<_>>())?,&Submenu::with_items(app,"编辑",true,&[&PredefinedMenuItem::undo(app,None)?,&PredefinedMenuItem::redo(app,None)?,&PredefinedMenuItem::cut(app,None)?,&PredefinedMenuItem::copy(app,None)?,&PredefinedMenuItem::paste(app,None)?,&PredefinedMenuItem::select_all(app,None)?])?])?;
   app.set_menu(app_menu)?;
+  }
   TrayIconBuilder::new().icon(tauri::image::Image::from_bytes(include_bytes!("../../desktop/tray.png"))?).icon_as_template(cfg!(target_os="macos")).tooltip("QQmanager · 后台运行").menu(&menu).show_menu_on_left_click(false).on_tray_icon_event(|tray,event|{if matches!(event,TrayIconEvent::Click{button:MouseButton::Left,button_state:MouseButtonState::Up,..}){show(tray.app_handle());}}).build(app)?;
   let nav=handle.clone();let popup=handle.clone();let download=handle.clone();let runtime=service.clone();
-  let window=WebviewWindowBuilder::new(app,"main",WebviewUrl::External(ORIGIN.parse()?)).title("QQmanager").inner_size(1280.,850.).min_inner_size(800.,600.).visible(false)
+  let builder=WebviewWindowBuilder::new(app,"main",WebviewUrl::External(ORIGIN.parse()?)).title("QQmanager").inner_size(1280.,850.).min_inner_size(800.,600.).visible(false);
+  #[cfg(windows)]
+  let builder=builder.theme(Some(tauri::Theme::Dark));
+  let window=builder
     .on_page_load(move|_,payload|{if matches!(payload.event(),tauri::webview::PageLoadEvent::Finished)&&local(payload.url())&&payload.url().path()=="/"{let _=fs::write(runtime.data.join("desktop-runtime.json"),serde_json::to_vec(&json!({"version":"0.4.0","webview_loaded":true,"renderer":if cfg!(windows){"WebView2"}else{"WebKit"}})).unwrap());}})
     .on_navigation(move|u|{if local(u){true}else{if external(u){let _=nav.opener().open_url(u.to_string(),None::<&str>);}false}})
     .on_new_window(move|u,_|{if local(&u)||external(&u){let _=popup.opener().open_url(u.to_string(),None::<&str>);}tauri::webview::NewWindowResponse::Deny})
@@ -259,6 +317,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
       tauri::webview::DownloadEvent::Requested{url,destination}=>{if !local(&url){return false;}if let Ok(dir)=download.path().download_dir(){let name=destination.file_name().unwrap_or_default().to_owned();let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();*destination=dir.join(format!("QQmanager-{stamp}-{}",name.to_string_lossy()));true}else{false}},
       tauri::webview::DownloadEvent::Finished{success,path,..}=>{let message=if success{format!("文件已保存到下载文件夹：{}",path.as_ref().and_then(|p|p.file_name()).unwrap_or_default().to_string_lossy())}else{"下载失败，请重试。".to_string()};let script=format!("if(typeof toast === 'function') toast({});",serde_json::to_string(&message).unwrap());let view=view.clone();thread::spawn(move||{let _=view.eval(&script);});true},_=>false}})
     .build()?;
+  #[cfg(windows)]
+  {
+    windows_theme::set_popup_theme(window.theme()?);
+    window.on_window_event(|event| {
+      if let tauri::WindowEvent::ThemeChanged(theme) = event {
+        windows_theme::set_popup_theme(*theme);
+      }
+    });
+  }
   let close=window.clone();window.on_window_event(move|e|{if let tauri::WindowEvent::CloseRequested{api,..}=e{api.prevent_close();let _=close.hide();}});
   if !std::env::args().any(|a|a=="--background"){window.show()?;}
   let h=handle.clone();thread::spawn(move||{
@@ -270,13 +337,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
    }
   });Ok(())
  })
- .on_menu_event(|app,event|{let s=app.state::<Arc<Service>>();match event.id().as_ref(){
-  "show"=>show(app),"quit"=>{s.stop();app.exit(0);},
-  "data"=>{let _=app.opener().open_path(s.data.to_string_lossy().to_string(),None::<&str>);},
-  "help"=>{let _=app.opener().open_url("https://github.com/LzumiTulle/QQmanager#readme",None::<&str>);},
-  "plugin"=>{if cfg!(target_os="macos"){if let Ok(p)=app.path().resource_dir(){if let Err(e)=app.opener().open_path(p.join("QQmanager Installer.app").to_string_lossy().to_string(),None::<&str>){error(app,e.to_string());}}}else{windows_setup::choose(app.clone());}},
-  "auto"=>{let old=s.prefs.lock().unwrap()["autoStart"].as_bool().unwrap_or(false);let r=if old{app.autolaunch().disable()}else{app.autolaunch().enable()};if let Err(e)=r{error(app,e.to_string());}else{s.prefs.lock().unwrap()["autoStart"]=json!(!old);s.save();}},_=>{}
- }})
+ .on_menu_event(|app,event|{
+    let action = event.id().as_ref();
+    if matches!(action, "show" | "quit" | "data" | "help" | "plugin" | "auto") {
+      if let Err(e) = desktop_operation(app, action, None) { error(app, e); }
+    }
+ })
  .build(tauri::generate_context!())?;
     app.run(|app, event| match event {
         tauri::RunEvent::Exit => {

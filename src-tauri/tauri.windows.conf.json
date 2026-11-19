@@ -1,0 +1,17 @@
+{
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "main-window-desktop",
+          "description": "Windows appearance and desktop preferences for the local QQmanager window.",
+          "windows": ["main"],
+          "local": false,
+          "remote": { "urls": ["http://127.0.0.1:8765/"] },
+          "permissions": ["core:window:allow-set-theme", "allow-desktop-action"]
+        }
+      ]
+    }
+  }
+}

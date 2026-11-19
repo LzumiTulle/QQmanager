@@ -3,6 +3,7 @@ import time
 import json
 import threading
 import re
+import secrets
 from datetime import date, datetime, timedelta, timezone
 
 
@@ -78,6 +79,24 @@ class NativeBridge:
         self.last_event = None
         self.group_refresh = 0
         self.media_refresh = 0
+
+    def bind_local_account(self, body):
+        """Select the local profile. Pairing and group collection are separate actions."""
+        account = body.get('account')
+        if not isinstance(account, str) or not re.fullmatch(r'[0-9]{5,20}', account):
+            raise ValueError('请输入 5–20 位数字 QQ 号')
+        store = self.store
+        with store.lock, store.db:
+            current = store.setting('ws_account')
+            if current == account:
+                return {'account': account}
+            if current or body.get('revision') != (store.setting('qq_login_revision') or ''):
+                raise ValueError('本地账号已变更，请刷新后再试。切换账号请先退出当前账号。')
+            values = dict(ws_account=account, qq_login_revision=secrets.token_hex(16),
+                          bridge_groups=[], bridge_enabled=False, native_enabled=False)
+            store.db.executemany('INSERT OR REPLACE INTO settings VALUES (?,?)',
+                                 [(k, json.dumps(v)) for k, v in values.items()])
+        return {'account': account}
 
     def refresh_media(self):
         from .media import recovery_targets

@@ -6,12 +6,23 @@ function icon(name) {
 }
 const labels = {home:'日程表',overview:'消息概览',insights:'事项',files:'资料库',tasks:'事项',messages:'资料库',connections:'设置',settings:'设置'};
 let nativeState = null;
+const desktopInvoke = window.__TAURI__?.core?.invoke;
+const managedLoginSupported = () => connectorState?.managed_login_supported !== false;
 let settingsTab='model', connectionTab='account', sortOrder='latest', topicFilter='全部';
 let groupFilter=localStorage.getItem('qqm-group-filter')||'', groupOptionsSignature='', groupSelecting=false;
 const canonicalView = name => labels[name]?name:'home';
-function applyTheme(theme){document.documentElement.dataset.theme=theme;localStorage.setItem('qqm-theme',theme);document.querySelectorAll('[data-theme-choice]').forEach(b=>{b.setAttribute('aria-pressed',String(b.dataset.themeChoice===theme));});}
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  localStorage.setItem('qqm-theme', theme);
+  document.querySelectorAll('[data-theme-choice]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.themeChoice === theme));
+  });
+  const desktopWindow = window.__TAURI__?.window?.getCurrentWindow();
+  if (desktopWindow) desktopWindow.setTheme(theme).catch(error => console.warn('窗口主题切换失败', error));
+}
 $('#search-shortcut').textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘ K' : 'Ctrl K';
-applyTheme(localStorage.getItem('qqm-theme')==='dark'?'dark':'light');
+const savedTheme = localStorage.getItem('qqm-theme');
+applyTheme(savedTheme === 'dark' || (!savedTheme && window.__TAURI__?.window) ? 'dark' : 'light');
 let overviewState = null;
 let connectorState = null, connectorSignature = '';
 let csrf = '', state = null, view = 'home', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
@@ -177,6 +188,7 @@ function sectionNavigation() {
     settings: [['connections','账号与收集'], ['identity','学籍信息'], ['model','消息分析'], ['notifications','提醒']]
   };
   const section = sectionOf(view);
+  if (desktopInvoke) routes.settings.push(['desktop', '桌面应用']);
   const items = routes[section] || [];
   const active = view === 'settings' ? settingsTab : view === 'tasks' && taskFilter !== 'open' ? 'tasks/'+taskFilter : view;
   const nav = $('#section-nav');
@@ -205,6 +217,7 @@ function render(){
   $('#import-label').textContent=view==='files'?'导入文件':'导入记录';
   $('#new-task-button').hidden=sectionOf(view)!=='insights' && view!=='home';
   $('#content').innerHTML=({home:scheduleView,overview:homeView,insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
+  if (view === 'settings' && settingsTab === 'desktop') readDesktopStartup();
   const m=state.llm||{},failed=m.counts?.failed||0;
   $('#analysis-status').textContent=failed?`${failed} 条分析失败`:m.enabled?'AI 已开启':'本地识别';
   $('#analysis-status').title=failed?'打开设置查看失败详情':'打开模型设置';
@@ -512,7 +525,10 @@ function sourceIssue() {
   }
   if (connectorState?.enabled && connectorState.status !== 'online') issues.push(connectorState.managed ? ['account', 'QQ 账号正在重新连接'] : ['other', '备用接入尚未连接']);
   if (state.watches.some(w => w.enabled && w.error)) issues.push(['folder', '文件夹扫描失败']);
-  return issues.map(([tab,message]) => `<button class="pending-banner" ${tab==='account'&&!connectorState?.selected_account?'data-action="qq-scan"':'data-source-issue="'+tab+'"'}>${message}<span>${tab==='account'?'继续 →':'查看数据来源 →'}</span></button>`).join('');
+  return issues.map(([tab,message]) => {
+    const scan = tab === 'account' && !connectorState?.selected_account && managedLoginSupported();
+    return `<button class="pending-banner" ${scan?'data-action="qq-scan"':'data-source-issue="'+tab+'"'}>${message}<span>${tab==='account'?'继续 →':'查看数据来源 →'}</span></button>`;
+  }).join('');
 }
 
 function nativePanel(){
@@ -521,10 +537,10 @@ function nativePanel(){
   const incompatible=!hooked&&Object.keys(signals).some(key=>key.startsWith('unwritable:'));
   const phase=!n.enabled?'客户端插件已暂停':!n.connected?'等待 QQ 客户端插件连接':incompatible?'当前 QQ 接口不兼容，消息尚未开始收集':!hooked?'插件已连接，正在验证消息监听':!n.account_matches?'监听已就绪，等待新消息确认绑定账号':'客户端消息监听已连接';
   const historyPhase=!n.enabled?'已暂停':!n.connected?'等 QQ 登录后补收':!n.history_state?'需要更新 QQ 客户端插件至 0.1.6 或更高版本':({waiting:'等待绑定账号登录',syncing:'正在核对群消息',checked:'已核对 QQ 可提供的记录',retry:'部分记录暂未补齐，将自动重试'})[n.history_state];
-  return `<section id="native-panel" class="panel"><div class="section-title"><h2>选择收集的群</h2><span id="native-group-count" class="badge">已选 ${d.selected.size} 个群${d.dirty?' · 未保存':''}</span></div><div class="status-line"><span class="dot"></span>${phase}</div><p class="connection-note">使用当前 QQ 客户端的轻量插件，无需 NapCat 或再次扫码登录。</p><p><strong>离线消息补收</strong> · ${esc(historyPhase)}${n.history?.saved?' · 已补收 '+n.history.saved+' 条':''}</p><p>勾选群后可选补收起始日。保存时，已选群会排到列表顶部。</p><input id="native-group-search" type="search" aria-label="搜索群聊" placeholder="搜索群名或群号" value="${esc(nativeGroupSearch)}"><div id="native-group-list" class="native-group-list">${nativeGroupRows()}</div><div class="inline-actions"><button type="button" data-action="native-refresh-groups">刷新 QQ 群列表</button><button type="button" data-action="native-clear-groups">取消全选</button><button type="button" class="primary" data-action="native-save-groups">保存群聊选择</button></div><p class="help">${n.groups_updated?`QQ 群列表已同步 ${n.groups_count} 个 · ${fmt(n.groups_updated)}。未勾选的群不收集消息。`:['0.1.1','0.1.2','0.1.3'].includes(n.version)?'完整列表需要更新 QQ 插件。请从应用菜单打开插件安装助手，更新后重启 QQ。':'等待 QQ 同步群列表。请保持 QQ 登录，也可点击刷新。'}</p><details ${d.account?'':'open'}><summary>账号与备用添加方式</summary><button type="button" data-action="native-add-group">按群号添加</button><p>使用你正常登录的 QQ，无需重复登录。QQ 重新登录后会按群补收缺少的消息；可补收的范围取决于 QQ 当前可读取的群记录。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(d.account)}" required></label><button type="submit">保存绑定账号</button></form><p>本次保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 最近心跳 ${fmt(n.last_seen)}</p><small>客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}</details><div class="inline-actions"><button data-action="native-toggle" ${state.settings.bridge_groups.length?'':'disabled'}>${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
+  return `<section id="native-panel" class="panel"><div class="section-title"><h2>选择收集的群</h2><span id="native-group-count" class="badge">已选 ${d.selected.size} 个群${d.dirty?' · 未保存':''}</span></div><div class="status-line"><span class="dot"></span>${phase}</div><p class="connection-note">使用当前 QQ 客户端的轻量插件。</p>${!managedLoginSupported() && desktopInvoke && d.account && !n.connected ? '<button data-desktop="plugin">安装 / 更新 QQ 消息插件</button>' : ''}<p><strong>离线消息补收</strong> · ${esc(historyPhase)}${n.history?.saved?' · 已补收 '+n.history.saved+' 条':''}</p><p>勾选群后可选补收起始日。保存时，已选群会排到列表顶部。</p><input id="native-group-search" type="search" aria-label="搜索群聊" placeholder="搜索群名或群号" value="${esc(nativeGroupSearch)}"><div id="native-group-list" class="native-group-list">${nativeGroupRows()}</div><div class="inline-actions"><button type="button" data-action="native-refresh-groups">刷新 QQ 群列表</button><button type="button" data-action="native-clear-groups">取消全选</button><button type="button" class="primary" data-action="native-save-groups">保存群聊选择</button></div><p class="help">${n.groups_updated?`QQ 群列表已同步 ${n.groups_count} 个 · ${fmt(n.groups_updated)}。未勾选的群不收集消息。`:['0.1.1','0.1.2','0.1.3'].includes(n.version)?(desktopInvoke?'请在「设置 → 桌面应用」更新 QQ 插件，更新后重启 QQ 以获取完整群列表。':'完整列表需要更新 QQ 插件。请从应用菜单打开插件安装助手，更新后重启 QQ。'):'等待 QQ 同步群列表。请保持 QQ 登录，也可点击刷新。'}</p><details ${d.account?'':'open'}><summary>账号与备用添加方式</summary><button type="button" data-action="native-add-group">按群号添加</button><p>使用你正常登录的 QQ，无需重复登录。QQ 重新登录后会按群补收缺少的消息；可补收的范围取决于 QQ 当前可读取的群记录。</p><form id="native-groups-form" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" value="${esc(d.account)}" required></label><button type="submit">保存绑定账号</button></form><p>本次保存 ${n.saved||0} 条 · 最近收到 ${fmt(n.last_event)} · 最近心跳 ${fmt(n.last_seen)}</p><small>客户端排队 ${n.queued||0} 条${n.dropped?' · 队列满已跳过 '+n.dropped+' 条':''}</small>${n.error?`<p class="warning">${esc(n.error)}</p>`:''}</details><div class="inline-actions"><button data-action="native-toggle" ${state.settings.bridge_groups.length?'':'disabled'}>${n.enabled?'暂停插件收集':'启用已配对插件'}</button></div></section>`;
 }
-function openQQScan(managed = true) {
-  openModal(managed ? '绑定 QQ 账号' : '扫码登录 QQ', `<section id="qq-scan" class="qq-scan">
+function openQQScan(managed = true, host = null) {
+  const scanHTML = `<section id="qq-scan" class="qq-scan">
     <p id="scan-state" role="status">正在准备登录二维码…</p>
     <img hidden alt="使用手机 QQ 扫描此登录二维码">
     <form hidden class="form-grid">
@@ -533,7 +549,9 @@ function openQQScan(managed = true) {
       <button type="submit" class="primary">验证并继续</button>
     </form>
     <button hidden type="button" id="scan-next"></button>
-  </section>`);
+  </section>`;
+  if (host) host.innerHTML = scanHTML;
+  else openModal(managed ? '绑定 QQ 账号' : '扫码登录 QQ', scanHTML);
   const revision = connectorState?.login_revision || '';
   const panel = $('#qq-scan'), status = $('#scan-state'), image = panel.querySelector('img');
   const form = panel.querySelector('form'), next = $('#scan-next');
@@ -551,12 +569,13 @@ function openQQScan(managed = true) {
     refresh_needed: '当前二维码不可用，请获取新的二维码。'
   };
   let timer, busy = false;
-  const active = () => modal.open && panel.isConnected;
-  modal.addEventListener('close', () => {
+  const active = () => panel.isConnected && (host ? !$('#login-screen').hidden : modal.open);
+  function cleanup() {
     clearTimeout(timer);
     form.reset();
     image.removeAttribute('src');
-  }, {once:true});
+  }
+  if (!host) modal.addEventListener('close', cleanup, {once:true});
 
   async function update(body = {}) {
     if (!active() || busy) return;
@@ -569,7 +588,8 @@ function openQQScan(managed = true) {
       if (!active()) return;
       const state = result.state;
       if (managed && state === 'bound') {
-        modal.close();
+        if (host) enterWorkspace();
+        else modal.close();
         await refreshConnector(true);
         if(result.select_groups){
           connectionTab=nativeState?.connected&&nativeState.account_matches?'qq':'account';
@@ -591,14 +611,19 @@ function openQQScan(managed = true) {
       otp.parentElement.hidden = !(state === 'two_factor' || (state === 'authorize' && otp.required));
       otp.required = !otp.parentElement.hidden;
       if (state === 'two_factor') otp.focus();
-      const labels = {confirm_account:'确认登录',expired:'关闭',failed:'重试', ready:'刷新二维码',waiting:'刷新二维码',refresh_needed:'刷新二维码',online:'返回选群',unavailable:'重新连接'};
+      const labels = {confirm_account:'确认登录',expired:host?'重新获取二维码':'关闭',failed:'重试', ready:'刷新二维码',waiting:'刷新二维码',refresh_needed:'刷新二维码',online:'返回选群',unavailable:'重新连接'};
       next.hidden = !labels[state];
       next.textContent = labels[state] || '';
       next.onclick = async () => {
         if (state === 'confirm_account') return update({confirm_account:result.account});
-        if (state === 'expired') {modal.close();return;}
+        if (state === 'expired') {
+          if (host) await checkStartupAccount(true);
+          else modal.close();
+          return;
+        }
         if (state === 'online') {
-          modal.close();
+          if (host) enterWorkspace();
+          else modal.close();
           if (connectorState?.enabled) await api('/api/connector/refresh', {}).catch(e => toast(e.message));
           await refreshConnector(true);
         } else update(state === 'failed' ? {retry:true} : state === 'unavailable' ? {} : {refresh:true});
@@ -624,6 +649,7 @@ function openQQScan(managed = true) {
     update({token:form.elements.token.value, otp:form.elements.otp.value});
   });
   update();
+  return cleanup;
 }
 
 function accountGroups(c, selected) {
@@ -636,18 +662,33 @@ function accountGroups(c, selected) {
   return `<form id="groups-form" class="form-grid"><div class="group-picker">${rows.join('')||'<p class="help">等待 QQ 返回群列表。</p>'}</div><button class="primary" type="submit" ${c.status==='online'?'':'disabled'}>保存所选群并自动收集</button><small>${c.managed?'已有记录的群从上次位置补收。首次收集可指定日期，留空从启用时开始。补收结果可在提醒中查看。':'保存后自动收集所选群的新消息。'}</small></form>`;
 
 }
+function localQQAccountForm(id = 'local-qq-account-form') {
+  const openQQ = desktopInvoke
+    ? '<button type="button" data-desktop="open-qq">打开本机 QQ</button>'
+    : '<small>请先在 Windows 中登录 QQ 客户端，再填写账号。</small>';
+  return `<form id="${id}" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" autocomplete="username" required></label>${openQQ}<button class="primary" type="submit">保存账号并继续</button><small>账号只保存在这台电脑。保存后安装 QQ 客户端插件，插件会复用当前 QQ 的登录状态。</small></form>`;
+}
+async function saveLocalQQAccount(form) {
+  const account = String(new FormData(form).get('account') || '').trim();
+  if (!/^[0-9]{5,20}$/.test(account)) throw new Error('QQ 账号应为 5–20 位数字');
+  await api('/api/qq/native-account', {account, revision:connectorState?.login_revision || ''});
+  nativeDraft = null;
+  await refreshConnector(true);
+}
 function accountPanel() {
   const c = connectorState;
   if (!c) return '<section class="panel" id="account-panel">正在读取 QQ 账号…</section>';
   const account = c.selected_account;
   const picker = c.enabled && c.account?.user_id === account && account;
+  const localOnly = !managedLoginSupported();
+  if (localOnly && !account) return `<section class="panel" id="account-panel"><div class="section-title"><h2>QQ 账号</h2></div><p>使用已登录的 Windows QQ 客户端。QQmanager 不会启动 Docker，也不会要求重复扫码。</p>${localQQAccountForm()}</section>`;
   return `<section class="panel" id="account-panel"><div class="section-title"><h2>QQ 账号</h2>${account ? '<button data-action="qq-logout">退出登录</button>' : ''}</div>
     ${account ? `<p>已绑定 · ${esc(account)}</p>` : '<p>用手机 QQ 扫一扫，绑定后即可使用。</p>'}
-    ${!account || (!picker && !nativeState?.connected) ? `<button class="primary" data-action="qq-scan">${account?'重新扫码登录':'扫码绑定 QQ'}</button>` : ''}
+    ${!localOnly && (!account || (!picker && !nativeState?.connected)) ? `<button class="primary" data-action="qq-scan">${account?'重新扫码登录':'扫码绑定 QQ'}</button>` : ''}
     ${account && c.managed && !picker && !nativeState?.connected ? '<p class="help">正在尝试重新连接。如果 QQ 要求重新登录，扫码后会继续使用已选群和上次补收位置。</p>' : ''}
     ${picker && c.managed && c.selected.length ? `<p id="managed-history-status" class="help">${esc(c.history_status||'等待核对所选群')}</p>` : ''}
     ${picker ? '<h3>选择要收集的群</h3>'+accountGroups(c,c.selected) : ''}
-    ${account && (nativeState?.enabled||nativeState?.connected&&nativeState.account_matches) ? `<button data-connection-tab="qq">${nativeState.enabled?'管理已接入的群':'选择要收集的群'}</button>` : ''}
+    ${account && (localOnly || nativeState?.enabled || nativeState?.connected && nativeState.account_matches) ? `<button data-connection-tab="qq">${nativeState.enabled?'管理已接入的群':'选择要收集的群'}</button>` : ''}
     </section>`;
 }
 function napcatPanel(){
@@ -655,7 +696,8 @@ function napcatPanel(){
   if(!c)return '<div id="napcat-panel" class="panel"><p>正在检查本机 NapCat 连接…</p></div>';
   const current=c.account&&c.selected_account===c.account.user_id;
   const selected=current?c.selected:[];
-  return `<section id="napcat-panel" class="panel"><div class="section-title"><h2>NapCat 实时连接</h2><span class="badge ${c.status==='online'?'':'amber'}">${esc(({disabled:'未启用',connecting:'连接中',waiting_login:'等待 QQ 登录',online:'已连接 QQ',disconnected:'等待重连'})[c.status])}</span></div><p id="connector-message">${esc(c.message)}</p><p class="help">已保存 ${c.selected.length} 个目标群 · ${c.collecting?'收集配置已启用':'收集已暂停'}。QQ 登录恢复后会自动继续。</p><div class="two-columns"><div><div class="connection-steps"><div class="step"><div><strong>登录 QQ</strong><button class="primary" data-action="qq-scan">扫码绑定 QQ</button></div></div><div class="step"><div><strong>勾选需要收集的群</strong><p>保存后持续收集新消息，断线自动重连。${c.managed?'重连后会核对 QQ 可提供的历史消息。':'此外部连接仅收集在线期间的新消息。'}</p></div></div></div><details><summary>连接设置</summary><button data-action="qq-advanced-scan">连接自有 NapCat 实例</button><form id="connector-form" class="form-grid"><label>本机 WebSocket 地址<input name="url" value="${esc(c.url)}" required></label><label>OneBot Token<input type="password" name="token" autocomplete="off" placeholder="${c.configured?'已保存，留空保持不变':'填写 NapCat WebSocket Token'}"></label><label class="checkbox-label"><input type="checkbox" name="enabled" ${c.enabled?'checked':''}>启用持续连接</label><button type="submit" class="primary">保存连接</button></form></details><p class="help">本次连接已保存 ${c.saved} 条记录 · 最近收到所选群消息 ${fmt(c.last_saved)}。未选群的消息不入库。</p></div><div><div class="section-title"><h2>${c.account?esc(c.account.nickname)+' · '+esc(c.account.user_id):'扫码后在这里选择群'}</h2><button data-action="refresh-groups">刷新群列表 ↻</button></div>${c.account&&!current&&c.selected.length?'<p class="warning">当前账号与原选择不同，请重新选择要收集的群。</p>':''}${accountGroups(c, selected)}</div></div></section>`;
+  const scanStep = managedLoginSupported() ? `<div class="step"><div><strong>登录 QQ</strong><button class="primary" data-action="qq-scan">扫码绑定 QQ</button></div></div>` : '';
+  return `<section id="napcat-panel" class="panel"><div class="section-title"><h2>NapCat 实时连接</h2><span class="badge ${c.status==='online'?'':'amber'}">${esc(({disabled:'未启用',connecting:'连接中',waiting_login:'等待 QQ 登录',online:'已连接 QQ',disconnected:'等待重连'})[c.status])}</span></div><p id="connector-message">${esc(c.message)}</p><p class="help">此项用于已有外部 OneBot 接入，不会启动 Docker。</p><div class="two-columns"><div><div class="connection-steps">${scanStep}<div class="step"><div><strong>勾选需要收集的群</strong><p>保存后持续收集新消息，断线自动重连。${c.managed?'重连后会核对 QQ 可提供的历史消息。':'此外部连接仅收集在线期间的新消息。'}</p></div></div></div><details><summary>连接设置</summary>${managedLoginSupported()?'<button data-action="qq-advanced-scan">连接自有 NapCat 实例</button>':''}<form id="connector-form" class="form-grid"><label>本机 WebSocket 地址<input name="url" value="${esc(c.url)}" required></label><label>OneBot Token<input type="password" name="token" autocomplete="off" placeholder="${c.configured?'已保存，留空保持不变':'填写 NapCat WebSocket Token'}"></label><label class="checkbox-label"><input type="checkbox" name="enabled" ${c.enabled?'checked':''}>启用持续连接</label><button type="submit" class="primary">保存连接</button></form></details><p class="help">本次连接已保存 ${c.saved} 条记录 · 最近收到 ${fmt(c.last_saved)}。</p></div><div><div class="section-title"><h2>${c.account?esc(c.account.nickname)+' · '+esc(c.account.user_id):'连接后在这里选择群'}</h2><button data-action="refresh-groups">刷新群列表 ↻</button></div>${c.account&&!current&&c.selected.length?'<p class="warning">当前账号与原选择不同，请重新选择要收集的群。</p>':''}${accountGroups(c, selected)}</div></div></section>`;
 }
 async function refreshConnector(force=false){
   try{
@@ -693,9 +735,43 @@ async function refreshConnector(force=false){
       if(picker && pickerTop)picker.scrollTop=pickerTop;
       connectorSignature=signature;
     }else if(view==='connections'&&$('#connector-message'))$('#connector-message').textContent=c.message;
+    return c;
   }catch(error){if(view==='connections'&&$('#connector-message'))$('#connector-message').textContent='连接状态读取失败：'+error.message;}
 }
+function desktopPreferences() {
+  return `<div class="desktop-preferences">
+    <label><input type="checkbox" data-desktop-startup disabled>登录 Windows 后在后台启动</label>
+    <div class="inline-actions"><button data-desktop="data">打开数据文件夹</button><button data-desktop="plugin">安装 / 更新 QQ 消息插件</button></div>
+    <div class="inline-actions"><button data-desktop="help">使用说明</button><button data-desktop="quit">退出 QQmanager</button></div>
+  </div>`;
+}
+async function readDesktopStartup() {
+  const checkbox = $('[data-desktop-startup]');
+  if (!checkbox || checkbox.dataset.saving) return;
+  try {
+    const checked = await desktopInvoke('desktop_action', {action:'status'});
+    if (!checkbox.dataset.saving) {
+      checkbox.checked = checked;
+      checkbox.disabled = false;
+    }
+  } catch (error) { toast(String(error)); }
+}
+window.addEventListener('focus', readDesktopStartup);
+document.addEventListener('change', async event => {
+  const checkbox = event.target;
+  if (!checkbox.matches('[data-desktop-startup]')) return;
+  checkbox.dataset.saving = 'true';
+  checkbox.disabled = true;
+  try {
+    checkbox.checked = await desktopInvoke('desktop_action', {action:'auto', enabled:checkbox.checked});
+  } catch (error) { toast(String(error)); }
+  finally {
+    delete checkbox.dataset.saving;
+    await readDesktopStartup();
+  }
+});
 function settingsView(){
+ if (settingsTab === 'desktop' && desktopInvoke) return `<section class="panel"><h2>桌面应用</h2>${desktopPreferences()}</section>`;
  if(settingsTab==='identity'){
    const p=state.identity;
    return `<section class="panel"><h2>学籍信息</h2><p>按 QQ 账号保存在本机，用于筛选考试。</p>
@@ -862,6 +938,7 @@ async function sourceDialog(item) {
 }
 
 async function handleAction(action,id){
+  if (action === 'close-modal') { modal.close(); return; }
   const i=state.insights.find(x=>x.id===id),t=state.tasks.find(x=>x.id===id),f=state.files.find(x=>x.id===id);
   switch(action){
     case 'qq-logout':
@@ -875,13 +952,12 @@ async function handleAction(action,id){
         await api('/api/qq/logout', {account:button.dataset.account, revision:button.dataset.revision});
         nativeDraft=null;nativeGroupSearch='';groupFilter='';localStorage.removeItem('qqm-group-filter');
         connectionTab='account';modal.close();
-        await refreshConnector(true);await refresh();toast('已退出 QQmanager');
+        await checkStartupAccount();toast('已退出 QQmanager');
       } finally {button.disabled=false;}
       return;
     }
     case 'qq-scan':openQQScan();return;
     case 'qq-advanced-scan':openQQScan(false);return;
-    case 'close-modal':modal.close();return;
     case 'import':importDialog();return;
     case 'import-files':importDialog('file');return;
     case 'source':return sourceDialog(i);
@@ -944,6 +1020,11 @@ async function fileBase64(file){return new Promise((resolve,reject)=>{const r=ne
 document.addEventListener('click',async event=>{
   if(!$('#group-filter-wrap').contains(event.target))closeGroupMenu();
   const button=event.target.closest('button,a');if(!button)return;
+  if (button.dataset.desktop && desktopInvoke) {
+    try { await desktopInvoke('desktop_action', {action:button.dataset.desktop}); }
+    catch (error) { toast(String(error)); }
+    return;
+  }
   if(button.id==='group-filter'){if(groupSelecting)closeGroupMenu();else{updateGroupOptions();groupSelecting=true;$('#group-options').hidden=false;button.setAttribute('aria-expanded','true');}return;}
   if(button.hasAttribute('data-group-value')){groupFilter=button.dataset.groupValue;localStorage.setItem('qqm-group-filter',groupFilter);closeGroupMenu();$('#group-filter').focus();await refresh();return;}
   if(button.dataset.removeGroup){const input=button.closest('.native-group-row').querySelector('[data-native-group]');toggleNativeGroup(input,false);input.focus({preventScroll:true});return;}
@@ -1024,6 +1105,11 @@ document.addEventListener('submit',async event=>{
       const start_dates=Object.fromEntries(groups.filter(id=>data.get('start-'+id)).map(id=>[id,data.get('start-'+id)]));
       await api('/api/connector/groups',{groups,start_dates});
       await refresh();await refreshConnector(true);window.scrollTo(0,0);toast(groups.length?(connectorState.managed?'已启用补收和日程识别，点「提醒」查看补收原文':'已保存所选群，开始收集新消息'):'已暂停群消息收集');
+    }else if(form.id==='local-qq-account-form'){
+      await saveLocalQQAccount(form);
+      connectionTab = 'qq';
+      await refresh();
+      toast('QQ 账号已保存。请安装客户端插件后重启 QQ。');
     }else if(form.id==='native-groups-form'){
       await api('/api/native/pair',{account:data.get('account').trim(),groups:[...ensureNativeDraft().selected]});nativeDraft=null;await refresh();await refreshConnector(true);toast('绑定账号已保存');
     }else if(form.id==='model-form'){
@@ -1074,10 +1160,112 @@ $('#group-filter-wrap').addEventListener('keydown',event=>{
  const next=event.key==='Home'?0:event.key==='End'?options.length-1:event.key==='ArrowUp'?(current<=0?options.length-1:current-1):(current+1)%options.length;
  options[next]?.focus();
 });
-window.addEventListener('hashchange',()=>setView(location.hash.slice(1)));
+window.addEventListener('hashchange',()=>{if ($('#login-screen').hidden) setView(location.hash.slice(1));});
 window.addEventListener('keydown',e=>{if((e.metaKey||e.ctrlKey)&&e.key==='k'){if(!$('#searchbar').hidden){e.preventDefault();$('#search').focus();}}});
-async function boot(){try{csrf=(await api('/api/session')).csrf;trackReview();const initial=location.hash.slice(1);taskFilter=routeTaskFilter(initial);view=taskFilter==='open'?canonicalView(initial):'tasks';await refresh();await refreshConnector(true);if(view==='home' && connectorState && !connectorState.selected_account && !connectorState.login_revision && !sessionStorage.getItem('qq-binding-seen')){sessionStorage.setItem('qq-binding-seen','1');openQQScan();}setInterval(()=>{document.querySelectorAll('[data-expires]').forEach(tag=>{tag.hidden=Date.now()<Number(tag.dataset.expires);});if(groupSelecting){refresh(false);return;}refreshConnector();const busy=modal.open||['connections','settings'].includes(view)||$('#content').contains(document.activeElement)||$('#content details[open]:not(.future-tasks)')||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);const expiredConfirmation=view==='overview' && $('#work-confirm [data-expires]:not([hidden])');
+let stopLoginScan;
+function clearLoginScan() {
+  stopLoginScan?.();
+  stopLoginScan = null;
+  $('#login-scan').replaceChildren();
+}
+function enterWorkspace() {
+  clearLoginScan();
+  $('#login-screen').hidden = true;
+  $('.sidebar').hidden = false;
+  $('main').hidden = false;
+  const route = location.hash.slice(1);
+  taskFilter = routeTaskFilter(route);
+  view = taskFilter === 'open' ? canonicalView(route) : 'tasks';
+  trackReview();
+  refresh();
+}
+async function checkStartupAccount(resumeScan = false) {
+  clearTimeout(reviewPoll);
+  ++reviewRequest;
+  clearLoginScan();
+  $('.sidebar').hidden = true;
+  $('main').hidden = true;
+  $('#login-screen').hidden = false;
+  const intro = $('#login-intro'), start = $('#login-start'), local = $('#login-local');
+  intro.hidden = false;
+  intro.textContent = '正在检查本机绑定的 QQ 账号…';
+  start.hidden = local.hidden = true;
+  try {
+    csrf = (await api('/api/session')).csrf;
+    const connector = await refreshConnector(true);
+    if (!connector) throw new Error('无法读取本机的 QQ 账号状态。');
+    if (connector.selected_account) {
+      enterWorkspace();
+      return;
+    }
+    if (!managedLoginSupported()) {
+      $('#login-title').textContent = '连接本机 QQ';
+      intro.textContent = '先在 Windows QQ 中登录，再填写同一个 QQ 号。';
+      const host = $('#login-scan');
+      host.innerHTML = localQQAccountForm('login-qq-account-form');
+      const form = host.querySelector('form');
+      form.addEventListener('submit', async event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const submit = form.querySelector('[type=submit]');
+        submit.disabled = true;
+        try {
+          await saveLocalQQAccount(form);
+          connectionTab = 'qq';
+          enterWorkspace();
+          setView('connections');
+          toast('QQ 账号已保存。请安装客户端插件后重启 QQ。');
+        } catch (error) {
+          toast(error.message);
+          submit.disabled = false;
+        }
+      });
+      form.elements.account.focus();
+      local.hidden = !csrf;
+      return;
+    }
+    $('#login-title').textContent = 'QQ 扫码登录';
+    intro.textContent = '用手机 QQ 扫描二维码，并在手机上确认登录。';
+    start.textContent = '获取登录二维码';
+    start.onclick = () => {
+      start.hidden = intro.hidden = true;
+      stopLoginScan = openQQScan(true, $('#login-scan'));
+    };
+    if (resumeScan) {
+      local.hidden = false;
+      start.onclick();
+      return;
+    }
+  } catch (error) {
+    intro.textContent = error.message;
+    start.textContent = '重新连接本地服务';
+    start.onclick = () => checkStartupAccount();
+  }
+  start.hidden = false;
+  local.hidden = !csrf;
+  start.focus({preventScroll:true});
+}
+$('#login-local').addEventListener('click', enterWorkspace);
+if (desktopInvoke) {
+  const settingsButton = $('#login-desktop');
+  settingsButton.hidden = false;
+  settingsButton.onclick = () => {
+    openModal('桌面应用', desktopPreferences());
+    readDesktopStartup();
+  };
+  window.addEventListener('keydown', event => {
+    if (event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey && event.code === 'KeyQ') {
+      event.preventDefault();
+      if (!event.repeat) desktopInvoke('desktop_action', {action:'quit'}).catch(error => toast(String(error)));
+    }
+  });
+}
+function boot(){
+  checkStartupAccount();
+  setInterval(()=>{
+    if (!$('#login-screen').hidden) return;
+    document.querySelectorAll('[data-expires]').forEach(tag=>{tag.hidden=Date.now()<Number(tag.dataset.expires);});if(groupSelecting){refresh(false);return;}refreshConnector();const busy=modal.open||['connections','settings'].includes(view)||$('#content').contains(document.activeElement)||$('#content details[open]:not(.future-tasks)')||['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);const expiredConfirmation=view==='overview' && $('#work-confirm [data-expires]:not([hidden])');
     const queueUntil=view==='home' && $('[data-queue-until]')?.dataset.queueUntil;
     const listUntil=$('[data-list-until]')?.dataset.listUntil;
-    refresh(!busy || Boolean(expiredConfirmation) || Boolean(queueUntil && Number(queueUntil)<=Date.now()) || Boolean(listUntil && Number(listUntil)<=Date.now()));},5000);}catch(error){notice(error.message);}}
+    refresh(!busy || Boolean(expiredConfirmation) || Boolean(queueUntil && Number(queueUntil)<=Date.now()) || Boolean(listUntil && Number(listUntil)<=Date.now()));},5000);}
 boot();

@@ -99,8 +99,15 @@ def make_server(store, port=8765, connector=None):
     napcat_login = NapCatLogin()
     from .review import HistoryReview
     history_review = HistoryReview(store)
-    qq_binding = QQBinding(store, connector)
-    if store.setting('qq_managed_login') and store.setting('ws_enabled'):
+    managed_supported = sys.platform != 'win32'
+    qq_binding = QQBinding(store, connector, managed_supported=managed_supported)
+    if not managed_supported and store.setting('qq_managed_login'):
+        # Retire only the old managed transport. Preserve the local account, group
+        # choices and history. A separately configured OneBot adapter stays independent.
+        with store.lock, store.db:
+            store.db.executemany('INSERT OR REPLACE INTO settings VALUES (?,?)',
+                                 [('ws_enabled', 'false'), ('ws_token', '""'), ('qq_managed_login', 'false')])
+    elif managed_supported and store.setting('qq_managed_login') and store.setting('ws_enabled'):
         qq_binding.runtime.remember_account(store.setting('ws_account'))
         qq_binding.runtime.prepare()
 
@@ -176,7 +183,7 @@ def make_server(store, port=8765, connector=None):
                         JOIN insights i ON mm.insight_id=i.id WHERE i.message_id=?''',(mid,))
                     self.send(dict(rows[0],matter_ids=[row['matter_id'] for row in links],attachments=for_message(store,mid)))
                 elif url.path == '/api/connector':
-                    self.send(dict(connector.snapshot(), enabled=store.setting('ws_enabled'), managed=bool(store.setting('qq_managed_login')), url=store.setting('ws_url'),
+                    self.send(dict(connector.snapshot(), managed_login_supported=managed_supported, enabled=store.setting('ws_enabled'), managed=bool(store.setting('qq_managed_login')), url=store.setting('ws_url'),
                                    configured=bool(store.setting('ws_token')), selected=store.setting('bridge_groups'),
                                    selected_account=store.setting('ws_account'), login_revision=store.setting('qq_login_revision') or '', collecting=store.setting('bridge_enabled')))
                 elif url.path == '/api/native':
@@ -257,6 +264,8 @@ def make_server(store, port=8765, connector=None):
                         napcat_login.expires = 0
                 elif self.path == '/api/qq/bind':
                     result = qq_binding.update(body)
+                elif self.path == '/api/qq/native-account' and not managed_supported:
+                    result = native.bind_local_account(body)
                 elif self.path == '/api/connector/qq-login':
                     result = napcat_login.update(body)
                 elif self.path == '/api/native/events':

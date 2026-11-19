@@ -2956,6 +2956,9 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows-registry",
+ "windows-sys 0.61.2",
+ "windows-version",
 ]
 
 [[package]]
