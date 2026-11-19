@@ -25,6 +25,9 @@ const savedTheme = localStorage.getItem('qqm-theme');
 applyTheme(savedTheme === 'dark' || (!savedTheme && window.__TAURI__?.window) ? 'dark' : 'light');
 let overviewState = null;
 let connectorState = null, connectorSignature = '';
+let activeQQAccounts = null;
+let activeQQAccountsRequest = null;
+let activeQQAccountsAt = 0;
 let csrf = '', state = null, view = 'home', category = '全部', taskFilter = 'open', searchTimer, toastTimer, loadSequence = 0;
 const modal = $('#modal');
 const fmt = value => value ? new Date(typeof value === 'number' ? value*1000 : value).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}) : '时间未知';
@@ -217,6 +220,9 @@ function render(){
   $('#import-label').textContent=view==='files'?'导入文件':'导入记录';
   $('#new-task-button').hidden=sectionOf(view)!=='insights' && view!=='home';
   $('#content').innerHTML=({home:scheduleView,overview:homeView,insights:insightsView,files:filesView,tasks:tasksView,messages:messagesView,connections:connectionsView,settings:settingsView})[view]();
+  if (view === 'connections' && connectionTab === 'account' && !managedLoginSupported() && !connectorState?.selected_account) {
+    setupLocalQQAccountForm($('#local-qq-account-form'));
+  }
   if (view === 'settings' && settingsTab === 'desktop') readDesktopStartup();
   const m=state.llm||{},failed=m.counts?.failed||0;
   $('#analysis-status').textContent=failed?`${failed} 条分析失败`:m.enabled?'AI 已开启':'本地识别';
@@ -665,8 +671,65 @@ function accountGroups(c, selected) {
 function localQQAccountForm(id = 'local-qq-account-form') {
   const openQQ = desktopInvoke
     ? '<button type="button" data-desktop="open-qq">打开本机 QQ</button>'
-    : '<small>请先在 Windows 中登录 QQ 客户端，再填写账号。</small>';
-  return `<form id="${id}" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" autocomplete="username" required></label>${openQQ}<button class="primary" type="submit">保存账号并继续</button><small>账号只保存在这台电脑。保存后安装 QQ 客户端插件，插件会复用当前 QQ 的登录状态。</small></form>`;
+    : '<small>请在此 Windows 设备登录 QQ 后返回这里确认账号；也可以手动填写。</small>';
+  return `<form id="${id}" class="form-grid"><label>日常使用的 QQ 账号<input name="account" inputmode="numeric" pattern="[0-9]{5,20}" autocomplete="username" required></label><div class="inline-actions"><button type="button" data-local-account-detect>识别正在运行的 QQ</button>${openQQ}</div><div class="local-account-detection" hidden><label>检测到的 QQ<select name="detected-account" aria-label="选择检测到的 QQ 账号"></select></label></div><p class="help" data-local-account-status>可手动填写；识别只读取本机正在运行的 QQ 账号，不会联网登录或启用收集。</p><button class="primary" type="submit">保存账号并继续</button><small>账号只保存在这台电脑。保存后安装 QQ 客户端插件，插件会复用当前 QQ 的登录状态。</small></form>`;
+}
+function setupLocalQQAccountForm(form) {
+  if (!form || form.dataset.accountDetectionReady) return;
+  form.dataset.accountDetectionReady = 'true';
+  const input = form.elements.account;
+  input.addEventListener('input', () => {
+    input.dataset.manual = 'true';
+    delete input.dataset.autoFilled;
+  });
+  form.elements['detected-account'].addEventListener('change', event => {
+    if (!event.target.value) return;
+    input.value = event.target.value;
+    input.dataset.manual = 'true';
+    delete input.dataset.autoFilled;
+  });
+  detectActiveQQAccounts(form);
+}
+window.addEventListener('focus', () => {
+  const form = document.querySelector('form[data-account-detection-ready]');
+  if (form) detectActiveQQAccounts(form, true);
+});
+async function readActiveQQAccounts(force = false) {
+  if (!force && activeQQAccounts && Date.now() - activeQQAccountsAt < 10000) return activeQQAccounts;
+  if (activeQQAccountsRequest) return activeQQAccountsRequest;
+  activeQQAccountsRequest = api('/api/qq/active-accounts').then(result => {
+    activeQQAccounts = [...new Set((result.accounts || []).filter(account => /^[0-9]{5,20}$/.test(String(account))).map(String))];
+    activeQQAccountsAt = Date.now();
+    return activeQQAccounts;
+  }).finally(() => { activeQQAccountsRequest = null; });
+  return activeQQAccountsRequest;
+}
+async function detectActiveQQAccounts(form, force = false) {
+  if (!form) return;
+  const status = form.querySelector('[data-local-account-status]');
+  const input = form.elements.account;
+  const picker = form.elements['detected-account'];
+  const holder = picker.closest('.local-account-detection');
+  status.textContent = '正在识别本机已登录的 QQ…';
+  try {
+    const accounts = await readActiveQQAccounts(force);
+    picker.innerHTML = `<option value="">请选择要绑定的账号</option>${accounts.map(account => `<option value="${esc(account)}">${esc(account)}</option>`).join('')}`;
+    holder.hidden = accounts.length < 2;
+    if (!input.dataset.manual) {
+      if (accounts.length === 1) {
+        input.value = accounts[0];
+        input.dataset.autoFilled = accounts[0];
+      } else if (input.dataset.autoFilled) {
+        input.value = '';
+        delete input.dataset.autoFilled;
+      }
+    }
+    if (!accounts.length) status.textContent = '暂未识别到账号。请登录本机 QQ 后返回，或手动填写。';
+    else if (accounts.length === 1) status.textContent = '已识别到一个 QQ 账号，请核对后保存。';
+    else status.textContent = `检测到 ${accounts.length} 个 QQ 账号，请选择要绑定的账号。`;
+  } catch (error) {
+    status.textContent = `本机 QQ 账号识别失败：${error.message}。可手动填写后保存。`;
+  }
 }
 async function saveLocalQQAccount(form) {
   const account = String(new FormData(form).get('account') || '').trim();
@@ -722,12 +785,16 @@ async function refreshConnector(force=false){
     if(view==='connections'&&(!busy||force)&&signature!==connectorSignature){
       const pickerTop=sameAccount&&!force?$('#groups-form .group-picker')?.scrollTop:0;
       const accountPanelEl = $('#account-panel');
-      if (accountPanelEl) accountPanelEl.outerHTML = accountPanel();
+      const keepLocalAccountForm = !c.selected_account && !managedLoginSupported() && accountPanelEl?.querySelector('#local-qq-account-form');
+      if (accountPanelEl && !keepLocalAccountForm) {
+        accountPanelEl.outerHTML = accountPanel();
+        setupLocalQQAccountForm($('#local-qq-account-form'));
+      }
       const panel=$('#napcat-panel');
       if(panel){
         panel.outerHTML=napcatPanel();
       }
-      if(panel || accountPanelEl){
+      if(panel || accountPanelEl && !keepLocalAccountForm){
         document.querySelectorAll('#groups-form input[name=group]').forEach(input=>{if(draft.has(input.value)){input.checked=draft.get(input.value);const label=input.closest('label').nextElementSibling;if(label)label.hidden=!input.checked;}});
       }
       document.querySelectorAll('#groups-form input[type=date]').forEach(input=>{if(dates.has(input.name))input.value=dates.get(input.name);});
@@ -1020,6 +1087,10 @@ async function fileBase64(file){return new Promise((resolve,reject)=>{const r=ne
 document.addEventListener('click',async event=>{
   if(!$('#group-filter-wrap').contains(event.target))closeGroupMenu();
   const button=event.target.closest('button,a');if(!button)return;
+  if (button.hasAttribute('data-local-account-detect')) {
+    await detectActiveQQAccounts(button.closest('form'), true);
+    return;
+  }
   if (button.dataset.desktop && desktopInvoke) {
     try { await desktopInvoke('desktop_action', {action:button.dataset.desktop}); }
     catch (error) { toast(String(error)); }
@@ -1200,10 +1271,11 @@ async function checkStartupAccount(resumeScan = false) {
     }
     if (!managedLoginSupported()) {
       $('#login-title').textContent = '连接本机 QQ';
-      intro.textContent = '先在 Windows QQ 中登录，再填写同一个 QQ 号。';
+      intro.textContent = '先在 Windows QQ 官方客户端完成登录，返回这里确认要绑定的账号。';
       const host = $('#login-scan');
       host.innerHTML = localQQAccountForm('login-qq-account-form');
       const form = host.querySelector('form');
+      setupLocalQQAccountForm(form);
       form.addEventListener('submit', async event => {
         event.preventDefault();
         event.stopPropagation();

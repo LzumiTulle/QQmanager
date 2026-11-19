@@ -153,6 +153,12 @@ def make_server(store, port=8765, connector=None):
                     self.send({'csrf': csrf})
                 elif url.path == '/api/health':
                     self.send({'app': 'QQmanager', 'protocol': 1})
+                elif url.path == '/api/qq/active-accounts' and not managed_supported:
+                    if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
+                        self.send({'error': '会话无效'}, 403)
+                        return
+                    from .windows_accounts import active_accounts
+                    self.send({'accounts': active_accounts()})
                 elif url.path == '/api/desktop':
                     if not hmac.compare_digest(self.headers.get('X-CSRF-Token', ''), csrf):
                         self.send({'error': '会话无效'}, 403)
