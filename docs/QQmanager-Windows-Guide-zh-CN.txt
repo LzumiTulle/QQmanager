@@ -109,8 +109,15 @@ Git 同步已提交并推送的项目文件。群聊、待办、附件、模型�
      自动测试、安装启动与真机交互的验证范围，未验证项写清平台和场景。
 
   本次在 macOS 对 main 候选代码运行 162 项 Python 测试（1 项原生 OCR 默认跳过），
-  以及 29 项 Node 测试，均无失败。两端安装包构建与启动见对应提交的 Actions
-  记录。不同缩放下的鼠标、触控板和键盘操作仍需真机复核。
+  以及 29 项 Node 测试，均无失败。GitHub 桌面验证记录如下：
+  main（a54a025），Windows x64、Apple 芯片与 Intel Mac
+    https://github.com/LzumiTulle/QQmanager/actions/runs/44674775451
+  Windows 本机适配分支（4755513），含安装、WebView2 启动和单实例检查
+    https://github.com/LzumiTulle/QQmanager/actions/runs/44674922023
+  Windows 开发安装包：登录 GitHub 后打开上面的 Windows 构建，在 Artifacts
+  下载 QQmanager-win-x64，解压后运行 .exe。构建产物有保留期限，可在该
+  分支重新运行 Desktop builds 并选择 windows_only。正式版本见文首 Releases。
+  不同缩放下的鼠标、触控板和键盘操作仍需真机复核。
 
   Windows 维护者与 macOS 维护者都要更新本文件。变更识别规则、操作入口、
   平台行为或验收方法时，在同一个提交或 PR 补上日期、设计依据、平台差异和
