@@ -39,7 +39,7 @@ def resolve_id(s,eid):
 def account(sc):return json.loads(sc)[0]
 
 
-def merge(s,source_id,target_id,manual=False):
+def merge(s,source_id,target_id,manual=False,*,repost=False):
     source_id=resolve_id(s,source_id);target_id=resolve_id(s,target_id)
     if source_id==target_id:return target_id
     rows=s.query('SELECT * FROM matters WHERE id IN (?,?)',(source_id,target_id))
@@ -63,7 +63,7 @@ def merge(s,source_id,target_id,manual=False):
     s.db.execute('UPDATE matter_splits SET parent_id=? WHERE parent_id=?', (target_id, source_id))
     s.db.execute('INSERT OR REPLACE INTO matter_aliases VALUES (?,?)',(source_id,target_id))
     s.db.execute('UPDATE matter_aliases SET target_id=? WHERE target_id=?',(target_id,source_id))
-    if all(accepted):remember(s,target_id,'reviewed')
+    if all(accepted) or (repost and any(accepted)):remember(s,target_id,'reviewed')
     return target_id
 
 
@@ -71,11 +71,11 @@ def cross_group_sync(s):
     # Account-scoped, evidence-based deduplication; a generic title/week is not proof.
     if not s.db.execute("SELECT 1 FROM sqlite_master WHERE name='workflow_decisions'").fetchone():return
     from .llm import Analyzer
-    allowed=Analyzer(s);by={}
+    allowed=Analyzer(s);by={}; members=memberships(s)
     for row in raw_insights(s):
         if not row.get('live_account') or not allowed.allowed({'account':row['live_account'],'group_id':row['live_group']}):continue
-        member=s.query('SELECT * FROM matter_members WHERE insight_id=?',(row['id'],))[0]
-        if member['manual']:continue
+        member=members[row['id']]
+        if member['locked']:continue
         by.setdefault(member['matter_id'],[]).append(row)
     fingerprints={}
     for mid,items in by.items():
@@ -220,22 +220,44 @@ def mentioned_dates(row):
             ds.add(d.isoformat())
     return sorted(ds)
 
+def memberships(s):
+    return {r['insight_id']: r for r in s.query("""SELECT mm.*,e.anchor,e.scope,
+        (e.manual OR EXISTS(SELECT 1 FROM matter_members x WHERE x.matter_id=e.id AND x.manual)
+         OR EXISTS(SELECT 1 FROM matter_splits x WHERE x.parent_id=e.id OR x.child_id=e.id)) locked
+        FROM matter_members mm JOIN matters e ON e.id=mm.matter_id""")}
+
+
 def sync(s):
-    with s.lock,s.db:
-        rows=raw_insights(s);assigned={x['insight_id']:x for x in s.query('SELECT mm.*,e.anchor FROM matter_members mm JOIN matters e ON e.id=mm.matter_id')}
-        for row in rows:
-            anchor,title,cat,w=identity(row);sc=scope(row)
-            previous=assigned.get(row['id'])
-            if previous and (previous['manual'] or not anchor or previous['anchor']==anchor):continue
-            found=s.query('SELECT id FROM matters WHERE scope=? AND anchor=? ORDER BY id LIMIT 1',(sc,anchor)) if anchor else []
-            if not found:
-                # Same title reposts only within 48 hours; later recurring notices are separate.
-                found=s.query('''SELECT e.id FROM matters e JOIN matter_members mm ON mm.matter_id=e.id
-                  JOIN insights i ON i.id=mm.insight_id JOIN messages m ON m.id=i.message_id
-                  WHERE e.scope=? AND e.title=? AND abs(julianday(m.sent_at)-julianday(?))<2 AND e.manual=0 LIMIT 1''',(sc,title,row['sent_at'])) if not anchor else []
-            eid=resolve_id(s,found[0]['id']) if found else s.db.execute('INSERT INTO matters(title,scope,anchor,week,topic,created) VALUES (?,?,?,?,?,?)',(title,sc,anchor,w,cat,time.time())).lastrowid
-            s.db.execute('INSERT INTO matter_members(insight_id,matter_id,checked) VALUES (?,?,?) ON CONFLICT(insight_id) DO UPDATE SET matter_id=excluded.matter_id,checked=excluded.checked',(row['id'],eid,int(bool(anchor) or row['engine']=='local')))
-        cross_group_sync(s)
+    # One planner snapshot reads matters repeatedly. Reuse the result only for
+    # the same committed database state, including writes from other connections.
+    from .planner import today
+    with s.lock:
+        version = s.db.execute('PRAGMA data_version').fetchone()[0]
+        day = today()
+        committed = not s.db.in_transaction
+        if committed and getattr(s,'_matter_sync_stamp',None)==(version,s.db.total_changes,day):
+            return
+        with s.db:
+            sync_memberships(s)
+        if committed:
+            s._matter_sync_stamp = (version,s.db.total_changes,day)
+
+
+def sync_memberships(s):
+    from .matter_matching import event_keys, local_groups
+    rows=raw_insights(s);assigned=memberships(s)
+    for row in rows:
+        anchor,title,cat,w=identity(row);sc=scope(row)
+        previous=assigned.get(row['id'])
+        if previous and (previous['locked'] or not anchor or previous['anchor']==anchor):continue
+        found=s.query('SELECT id FROM matters WHERE scope=? AND anchor=? ORDER BY id LIMIT 1',(sc,anchor)) if anchor else []
+        eid=resolve_id(s,found[0]['id']) if found else s.db.execute('INSERT INTO matters(title,scope,anchor,week,topic,created) VALUES (?,?,?,?,?,?)',(title,sc,anchor,w,cat,time.time())).lastrowid
+        s.db.execute('INSERT INTO matter_members(insight_id,matter_id,checked) VALUES (?,?,?) ON CONFLICT(insight_id) DO UPDATE SET matter_id=excluded.matter_id,checked=excluded.checked',(row['id'],eid,int(bool(anchor) or row['engine']=='local')))
+    members=memberships(s)
+    keys=event_keys(s,rows)
+    for source,target,repost in local_groups(rows,members,keys):
+        merge(s,source,target,repost=repost)
+    cross_group_sync(s)
 
 def list_matters(s,query='',group=''):
     from .schedule import notice_dates, single_deadline
@@ -398,10 +420,9 @@ def organize_step(s,caller=None):
     if len(candidates)==1:
         with s.lock,s.db:s.db.execute('UPDATE matter_members SET checked=1 WHERE insight_id=?',(target['id'],))
         return True
-    token=[r['id'] for r in candidates]
     if not reserve_call(s,cfg):return False
-    # Bound retries per batch; re-analysis or new messages create new pending rows.
-    with s.lock,s.db:s.db.executemany('UPDATE matter_members SET checked=1 WHERE insight_id=?',[(i,) for i in token])
+    # Context rows may still have counterparts outside this target's shortlist.
+    with s.lock,s.db:s.db.execute('UPDATE matter_members SET checked=1 WHERE insight_id=?',(target['id'],))
     payload=[dict(id=r['id'],title=r['title'],kind=r['kind'],day=r['sent_at'][:10]) for r in candidates]
     try:
         result=(caller or request_json)(cfg,[{'role':'system','content':MERGE_PROMPT},{'role':'user','content':json.dumps(payload,ensure_ascii=False)}])
@@ -418,13 +439,26 @@ def organize_step(s,caller=None):
             plans.append((ids,title.strip()))
         with s.lock,s.db:
             if s.setting('llm_config')!=cfg or not Analyzer(s).allowed({'group_id':target['live_group'],'account':target['live_account']}):return False
+            from .matter_matching import event_keys, SPAN
+            current_rows=raw_insights(s)
+            keys=event_keys(s,current_rows)
+            members=memberships(s)
             for ids,title in plans:
                 ms=s.query('SELECT mm.*,e.anchor,e.week FROM matter_members mm JOIN matters e ON e.id=mm.matter_id WHERE insight_id IN ('+','.join('?' for _ in ids)+')',ids)
-                if any(m['manual'] for m in ms):continue
+                mids={m['matter_id'] for m in ms}
+                constituents=[r for r in current_rows if members[r['id']]['matter_id'] in mids]
+                if len(ms)!=len(ids) or len(mids)<2 or any(members[m['insight_id']]['locked'] for m in ms):continue
+                if any(scope(r)!=scope(target) or r['status']=='dismissed' for r in constituents):continue
+                identities={keys[r['id']] for r in constituents if r['id'] in keys and keys[r['id']][0]!='repost'}
+                if len(identities)>1:continue
+                if identities:
+                    dates=[timestamp(r['sent_at']) for r in constituents]
+                    if None in dates or max(dates)-min(dates)>SPAN[next(iter(identities))[0]]:continue
                 if len({m['anchor'] for m in ms if m['anchor']})>1:continue
                 dest=next((m['matter_id'] for m in ms if m['anchor']),min(m['matter_id'] for m in ms))
-                for mid in {m['matter_id'] for m in ms}:
+                for mid in mids:
                     if mid!=dest:merge(s,mid,dest)
+                s.db.executemany('UPDATE matter_members SET checked=1 WHERE insight_id=?',[(i,) for i in ids])
                 s.db.execute("UPDATE matters SET title=? WHERE id=? AND anchor='' AND manual=0",(title,dest))
         s.set_setting('matter_error','');return True
     except Exception:

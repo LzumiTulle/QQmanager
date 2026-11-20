@@ -60,6 +60,23 @@ function changeStatus(c){return {pending:'待确认调课',applied:'已调整',e
 function changeButton(c){return `<button class="change-chip ${c.state==='applied'?'change-applied':'change-pending'}" data-plan="review-change" data-id="${c.id}">${changeStatus(c)} · ${esc(c.title)}</button>`;}
 function changesForDay(day){return (plannerState?.changes||[]).filter(c=>['pending','applied'].includes(c.state)&&c.dates.includes(day));}
 function changeInbox(){const rows=(plannerState?.changes||[]).filter(c=>c.state!=='applied');return rows.length?`<button class="pending-banner" data-plan="changes"><span><i aria-hidden="true">•</i> ${rows.length} 项调课等待确认</span><span>查看 →</span></button>`:'';}
+function courseNoticeDetails(notices, matters) {
+ const owners = new Map();
+ for (const matter of Object.values(matters)) {
+   for (const id of matter.source_message_ids || []) {
+     owners.set(id, owners.has(id) ? null : matter.id);
+   }
+ }
+ const threads = new Map();
+ for (const notice of notices) {
+   const key = owners.get(notice.id) || 'message-'+notice.id;
+   if (!threads.has(key)) threads.set(key,[]);
+   threads.get(key).push(notice);
+ }
+ const original = n => `<article class="course-notice-detail"><small>${esc(n.kind)} · ${esc(n.group_name)} · ${esc(n.sender)} · ${fmt(n.sent_at)}</small><p>${esc(n.content)}</p><button data-action="message-detail" data-id="${n.id}">查看原文</button></article>`;
+ return Array.from(threads.values(), ([latest,...earlier]) => original(latest) +
+   (earlier.length ? `<details><summary>此前通知（${earlier.length}）</summary>${earlier.map(original).join('')}</details>` : '')).join('');
+}
 function lessonAction(c){return `data-plan="${c.adjusted?'review-change':'edit-course'}" data-id="${c.adjusted?c.change_id:c.id}"`;}
 function changeTime(row,prefix){const date=row[prefix+'_date'],start=row[prefix+'_start_period'],end=row[prefix+'_end_period'];if(!date||!start||!end)return '日期或节次待补充';const day=new Date(date+'T12:00:00Z').getUTCDay();const blocks=plannerState.config.blocks;return `${date} ${weekdays[(day+6)%7]} · ${start}–${end} 节<br>${blocks[Math.floor((start-1)/2)][0]}–${blocks[Math.floor((end-1)/2)][1]}`;}
 async function changeDialog(id){const c=await api('/api/planner/change/'+id);currentChange=c;
@@ -242,13 +259,13 @@ async function matterDialog(id,tab='overview') {
   }
   const tabs=[['overview','概览'],['messages','原文 '+e.messages.length]];
   if(e.attachments.length)tabs.push(['files','附件 '+e.attachments.length]);
-  const tools=matterTab!=='overview'?'':`<section class="matter-tools"><h3>整理事项</h3><div class="matter-buttons">
+  const tools=matterTab!=='overview'?'':`<details class="matter-tools"><summary>整理事项</summary><div class="matter-buttons">
     ${!expired&&unread?'<button data-plan="matter-status" data-status="read">标记已读</button>':''}
     <button data-plan="matter-status" data-status="${e.saved?'new':'saved'}">${e.saved?'取消收藏':'收藏'}</button>
     <button data-plan="merge-matter" data-direction="in">将其他事项合入这里…</button>
     <button data-plan="merge-matter" data-direction="out">合并到其他事项…</button>
     <button data-plan="matter-status" data-status="${e.status==='dismissed'?'new':'dismissed'}">${e.status==='dismissed'?'恢复事项':'忽略事项'}</button></div>
-    ${splitControls(e)}</section>`;
+    ${splitControls(e)}</details>`;
   openModal('事项详情',`<h2 class="detail-title">${esc(matterTitle(e))}</h2><div class="detail-meta"><strong class="workflow-status">${esc(expired?'已过期':workflowLabel(e.id))}</strong><span>${esc(e.group_name)}</span></div>
     <div class="tabs detail-tabs" role="tablist" aria-label="事项内容">${tabs.map(([key,label])=>`<button role="tab" aria-selected="${matterTab===key}" class="${matterTab===key?'active':''}" data-plan="matter-tab" data-tab="${key}">${label}</button>`).join('')}</div>${expired&&e.status==='new'?'<button class="primary" data-plan="matter-status" data-status="read">标记已读并收起</button>':''}${body}${tools}`,true);
   if(matterTab==='messages') await readOriginals(e.messages.map(m=>m.id));
@@ -302,7 +319,7 @@ document.addEventListener('click',async event=>{
   if(action==='add-course')return courseDialog();
   if(action==='course-notices'){
     const lesson=plannerState.days.find(day=>day.date===b.dataset.date)?.courses.find(c=>c.id===id);
-    if(lesson)openModal(lesson.title+' · 课前提醒',lesson.notices.map(n=>`<article class="course-notice-detail"><small>${esc(n.group_name)} · ${esc(n.sender)} · ${fmt(n.sent_at)}</small><p>${esc(n.content)}</p><button data-action="message-detail" data-id="${n.id}">查看原文</button></article>`).join(''));
+    if(lesson)openModal(lesson.title+' · 课程事项',courseNoticeDetails(lesson.notices,plannerState.workflow.matters));
     return;
   }
   if(action==='edit-course')return courseDialog(plannerState.courses.find(c=>c.id===id));

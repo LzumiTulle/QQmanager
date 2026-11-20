@@ -1,12 +1,12 @@
-QQmanager｜在 Windows 上继续开发
-仓库长期维护版
+QQmanager｜macOS 与 Windows 开发交接存档
+Windows 接手步骤与双端维护记录
 
 查看已合入 main 的开发进度、Windows 构建结果和可下载的版本：
   开发记录  https://github.com/LzumiTulle/QQmanager/commits/main/
   构建记录  https://github.com/LzumiTulle/QQmanager/actions/workflows/build.yml
   安装包    https://github.com/LzumiTulle/QQmanager/releases
 
-本指南随仓库维护。在 Windows 上重新打开下方固定地址，即可查看当前版本。
+两端共同维护本文件。固定地址指向 main 最新版本，可在文件页点 Download raw file 下载纯文本。
 https://github.com/LzumiTulle/QQmanager/blob/main/docs/QQmanager-Windows-Guide-zh-CN.txt
 
 一、第一次在 Windows 上获取项目
@@ -78,6 +78,45 @@ Git 同步已提交并推送的项目文件。群聊、待办、附件、模型�
 安装器的版本，展开 Assets 并下载 .exe。安装包内置运行环境。
 
 五、交接存档
+
+2026-11-20　同一事项自动归并，课堂通知归入对应课次
+
+  从使用者的角度，同一条群消息无论在 Mac 还是 Windows 上收到，打开「事项」
+  和日程表都应看到相同的归属、最新要求和可追溯的原文。例：先通知编译原理
+  实验做 C4，老师紧接着更正为 C4+C5，对应课次显示更正内容，「此前通知」
+  可查最初的 C4。全量刷新再次处理历史消息时，也应得到同一结果。
+
+  开发思路
+  • 把识别放在共享 Python 服务。course_notices.py 按生效课表匹配课程和课次，
+    包括调课、日期和实验场地。matter_matching.py 用课次、课程及作业次数、
+    具名表单或重复原文提供归并依据。两端共用判定与数据，界面只呈现结果。
+  • 对“更正：C4+C5”“这份作业改交……”这样的短句，只引用同一会话中
+    30 分钟内同一发送者紧邻的上一条消息。中间插入无关消息或有多个可能
+    对象时，保留独立处理的机会。确定的本地匹配在关闭模型时也能生效。
+  • 保护人的决定。重复转发沿用已确认状态，有实质变化时提示复核。核对已有
+    待办和计划仍然关联，人工拆分、合并的结果在全量刷新后仍然有效。
+
+  双端验收
+  1. 用相同的合成课表和群消息，在两端依次验证新消息、历史导入、全量刷新。
+     同一次实验的 C4 与更正应归在一起；下一周的课次、同一课程的第四次和
+     第五次作业应能分别打开。再手动拆开一项、刷新，核对原文、状态和计划。
+  2. 使用同一份数据比较结果，再按平台检验实际操作。Mac 用 ⌘K、触控板和
+     菜单栏入口；Windows 用 Ctrl+K、鼠标和系统托盘。两端均可用按钮完成
+     合并。检验详情滚动、键盘焦点和长中文标题，尤其注意 Windows 高 DPI
+     或放大字号时按钮能否完整显示。文件选择、通知沿用各自系统控件。
+  3. 共享回归见 tests/test_matter_matching.py、tests/test_schedule.py 和
+     tests/schedule_view.test.cjs。桌面构建结果见文首链接。交接时分别记录
+     自动测试、安装启动与真机交互的验证范围，未验证项写清平台和场景。
+
+  本次在 macOS 对 main 候选代码运行 162 项 Python 测试（1 项原生 OCR 默认跳过），
+  以及 29 项 Node 测试，均无失败。两端安装包构建与启动见对应提交的 Actions
+  记录。不同缩放下的鼠标、触控板和键盘操作仍需真机复核。
+
+  Windows 维护者与 macOS 维护者都要更新本文件。变更识别规则、操作入口、
+  平台行为或验收方法时，在同一个提交或 PR 补上日期、设计依据、平台差异和
+  验证结果。分支独有的功能标出分支名；合入 main 时一并更新本记录。
+  Windows 专用分支持续开发时，先提交本机改动，再执行 git fetch origin 和
+  git merge origin/main，复查共享场景后推送。交接始终沿用文首固定地址。
 
 Windows 本地接入适配（开发分支 codex/windows-native-local）
   源码  https://github.com/LzumiTulle/QQmanager/tree/codex/windows-native-local

@@ -16,8 +16,10 @@ BLOCKS = [['08:00','09:40'],['10:00','11:40'],['14:00','15:40'],['16:00','17:40'
 def today(): return datetime.now(TZ).date()
 
 def migrate(s):
-    s.db.execute("""CREATE INDEX IF NOT EXISTS course_notice_candidates ON messages(id)
-        WHERE instr(content,'带')>0 OR instr(content,'准备好')>0""")
+    from .course_notices import NOTICE_CANDIDATE
+    s.db.execute(f"CREATE INDEX IF NOT EXISTS course_notice_candidates_v3 ON messages(id) WHERE {NOTICE_CANDIDATE}")
+    s.db.execute("DROP INDEX IF EXISTS course_notice_candidates")
+    s.db.execute("DROP INDEX IF EXISTS course_notice_candidates_v2")
     s.db.executescript('''CREATE TABLE IF NOT EXISTS courses (
       id INTEGER PRIMARY KEY, payload TEXT NOT NULL, source_id INTEGER, fingerprint TEXT UNIQUE, deleted INTEGER DEFAULT 0);
       CREATE TABLE IF NOT EXISTS planner_imports (

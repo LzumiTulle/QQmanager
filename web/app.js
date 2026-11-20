@@ -227,14 +227,6 @@ function listSection(title, count, rows, listClass='info-list') {
   return `<section class="topic-section"><div class="topic-heading"><h2>${esc(title)}<span>${count}</span></h2></div><div class="${listClass}">${rows}</div></section>`;
 }
 
-function itemStage(item){
-  if(item.personal){
-    if(item.status==='done')return '已完成';
-    const fixed=plannerState.workflow.fixed_exams.some(e=>e.task_id===item.id&&!e.outside_class);
-    return item.planned_date||fixed?'已安排':item.deadline&&item.remind_at?'待完成':'待安排';
-  }
-  return workflowLabel(item.id)||'通知';
-}
 function topicList(items, actions, empty) {
   const {regular,overdue,expired,nextChange}=matterListSections(items,view==='tasks'||category==='全部',Date.now(),view==='insights'&&['已读','已收藏','其他通知'].includes(category));
   const counts=new Map(QQFilters.group([...regular,...overdue]).map(g=>[g.name,g.items.length]));
@@ -247,27 +239,15 @@ function topicList(items, actions, empty) {
   if(urgent.length)sections.push(listSection('已逾期',urgent.length,urgent.map(t=>taskRow(t)).join(''),'task-list'));
   for(const g of QQFilters.group(regular.filter(inTopic))){
     const row=i=>i.personal?taskRow(i):matterCard(i,'overview',true);
-    let body;
-    if(view==='tasks'||category==='全部')body=g.items.map(row).join('');
-    else {
-      const stages=new Map();
-      for(const item of g.items){
-        const stage=itemStage(item);
-        if(!stages.has(stage))stages.set(stage,[]);
-        stages.get(stage).push(item);
-      }
-      body=[...stages].map(([label,items])=>`<div class="matter-stage"><h3>${esc(label)} <span>${items.length}</span></h3>${items.map(row).join('')}</div>`).join('');
-    }
-    sections.push(listSection(g.name,g.items.length,body));
+    sections.push(listSection(g.name,g.items.length,g.items.map(row).join('')));
   }
-  const buttons = names.map(name => {
-    const active = name === topicFilter;
+  const options = names.map(name => {
     const count = name === '全部' ? regular.length+overdue.length : counts.get(name) || 0;
-    return `<button aria-pressed="${active}" class="${active ? 'active' : ''}" data-topic="${name}">${name}<span class="topic-count">${count}</span></button>`;
+    return `<option value="${esc(name)}" ${name===topicFilter?'selected':''}>${name==='全部'?'全部分类':esc(name)}（${count}）</option>`;
   });
-  const topicTabs=names.length>2 || topicFilter!=='全部'
-    ? `<div class="tabs topic-tabs" role="group" aria-label="事项分类">${buttons.join('')}</div>`:'';
-  return `<div class="toolbar topic-toolbar" ${topicTabs||actions?'':'hidden'}${Number.isFinite(nextChange)?` data-list-until="${nextChange}"`:''}>${topicTabs}${actions}</div>`
+  const topics=names.length>2 || topicFilter!=='全部'
+    ? `<select id="topic-filter" aria-label="事项分类">${options.join('')}</select>`:'';
+  return `<div class="toolbar topic-toolbar" ${topics||actions?'':'hidden'}${Number.isFinite(nextChange)?` data-list-until="${nextChange}"`:''}>${topics}${actions}</div>`
     + (sections.join('') || empty);
 }
 
@@ -964,7 +944,6 @@ document.addEventListener('click',async event=>{
   if(button.dataset.route){if(button.dataset.route==='connections'){connectionTab='account';if(view==='connections')render();}setView(button.dataset.route);return;}
   if(button.dataset.settingsTab){settingsTab=button.dataset.settingsTab;if(view==='settings')render();else setView('settings');return;}
   if(button.dataset.connectionTab){connectionTab=button.dataset.connectionTab;if(view==='connections')render();else setView('connections');return;}
-  if(button.dataset.topic){topicFilter=button.dataset.topic;render();return;}
   if (button.dataset.heatDay || button.dataset.libraryDay) {
     const day = button.dataset.heatDay || button.dataset.libraryDay;
     if (button.dataset.libraryDay && libraryOpen === day) {
@@ -1054,6 +1033,7 @@ if(event.target.dataset.nativeDate){
 if(event.target.id==='library-year'){
   libraryYear=event.target.value;libraryOpen='';libraryOffset=0;render();$('#library-year')?.focus();return;
 }
+if(event.target.id==='topic-filter'){topicFilter=event.target.value;render();document.querySelector('#topic-filter')?.focus();return;}
 if(event.target.id==='read-filter'){category=event.target.value;render();return;}
 if(event.target.id==='sort-order'){sortOrder=event.target.value;render();return;}
 if(event.target.id==='model-preset'){

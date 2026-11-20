@@ -2,7 +2,7 @@
 
 把热闹的群聊整理成有原文依据的通知、待办和资料。支持 **macOS / Windows 桌面应用**、聊天与文件导入、全文搜索，以及 DeepSeek / OpenAI 兼容接口。
 
-**[下载安装包](https://github.com/LzumiTulle/QQmanager/releases)** · [Windows 开发同步与交接存档](docs/QQmanager-Windows-Guide-zh-CN.txt) · [桌面使用与构建](docs/DESKTOP.md) · [QQ 插件说明](docs/NATIVE-PLUGIN.md) · [隐私与安全](SECURITY.md)
+**[下载安装包](https://github.com/LzumiTulle/QQmanager/releases)** · [macOS / Windows 开发交接存档](docs/QQmanager-Windows-Guide-zh-CN.txt) · [桌面使用与构建](docs/DESKTOP.md) · [QQ 插件说明](docs/NATIVE-PLUGIN.md) · [隐私与安全](SECURITY.md)
 
 ## 安装与使用
 
