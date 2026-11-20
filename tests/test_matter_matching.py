@@ -48,6 +48,17 @@ class AutomaticMatterTests(unittest.TestCase):
         next_lab = self.add('本次编译原理实验做C4','2026-11-27T10:05:00+08:00',live=True)
         self.assertNotEqual(flow['id'],self.containing(next_lab)['id'])
 
+        correction = next(item for item in matters.detail(self.s, flow['id'])['items']
+                          if item['message_id'] == ids[1])
+        child = matters.update(self.s, dict(id=flow['id'], split_insight=correction['id']))['id']
+        self.s.reanalyze(full=True)
+        self.assertEqual((self.containing(ids[0])['id'], self.containing(ids[1])['id']), (flow['id'], child))
+        self.assertEqual(self.containing(next_lab)['source_message_ids'], [next_lab])
+        for date, expected in [('2026-11-20', ids[::-1]), ('2026-11-27', [next_lab])]:
+            days = planner.snapshot(self.s, date)['days']
+            notices = [n['id'] for day in days for course in day['courses'] for n in course['notices']]
+            self.assertEqual(notices, expected)
+
     def test_short_correction_cannot_cross_intervening_chat_sender_or_group(self):
         self.add('本次编译原理实验做C4')
         self.add('无关聊天','2026-11-20T10:06:00+08:00')
@@ -76,6 +87,12 @@ class AutomaticMatterTests(unittest.TestCase):
         self.s.reanalyze(full=True)
         self.assertEqual(self.containing(b)['id'],child)
         self.assertEqual(self.containing(a)['source_message_ids'],[a])
+        refreshed = planner.snapshot(self.s, '2026-11-20')['workflow']['matters']
+        self.assertEqual(refreshed[str(original['id'])]['state'], 'scheduled')
+        self.assertEqual(refreshed[str(child)]['state'], 'confirm')
+        self.assertEqual([t['id'] for t in workflow.linked_tasks(self.s, original['id'])], [tid])
+        self.assertEqual(workflow.linked_tasks(self.s, child), [])
+        self.assertEqual([m['id'] for m in matters.detail(self.s, child)['messages']], [b])
 
     def test_repost_keeps_acknowledgment_and_new_document_requirement_reopens(self):
         a = self.add('请大家提交本学期读书笔记')

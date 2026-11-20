@@ -233,13 +233,15 @@ class HTTPTests(unittest.TestCase):
         self.server=make_server(self.store,0)
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         self.url='http://127.0.0.1:'+str(self.server.server_port)
-        self.csrf=json.load(urllib.request.urlopen(self.url+'/api/session'))['csrf']
+        # Exercise this test's loopback server directly, including when the Host header differs.
+        self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        self.csrf = json.load(self.client.open(self.url + '/api/session'))['csrf']
 
     def tearDown(self):
         self.server.shutdown();self.server.server_close();self.thread.join();self.store.db.close();self.temp.cleanup()
 
     def request(self,path,data,headers=None):
-        return urllib.request.urlopen(urllib.request.Request(self.url+path,json.dumps(data).encode(),dict({'Content-Type':'application/json'},**(headers or {}))))
+        return self.client.open(urllib.request.Request(self.url+path,json.dumps(data).encode(),dict({'Content-Type':'application/json'},**(headers or {}))))
 
     def test_import_requires_csrf_and_rejects_foreign_origin(self):
         body={'name':'a.txt','text':'通知：请提交报告','group_name':'工作群','mode':'chat'}
@@ -280,7 +282,7 @@ class HTTPTests(unittest.TestCase):
     def test_file_download_preserves_bytes(self):
         self.store.import_data('资料.txt','数据分析资料'.encode(),'群','file')
         f=self.store.snapshot()['files'][0]
-        response=urllib.request.urlopen(self.url+'/api/download/'+str(f['id']))
+        response=self.client.open(self.url+'/api/download/'+str(f['id']))
         self.assertEqual(response.read(),'数据分析资料'.encode())
         self.assertIn('attachment',response.headers['Content-Disposition'])
 

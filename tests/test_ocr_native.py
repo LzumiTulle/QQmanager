@@ -9,9 +9,9 @@ import unittest
 class NativeOCRTests(unittest.TestCase):
     def test_synthetic_notice_has_time_and_room(self):
         from qqmanager.ocr import recognize
-        # Windows runners only have English OCR installed. Test that supported
-        # language explicitly; the Mac fixture also exercises Chinese text.
+        # Use an English fixture on Windows so English-only runners can also read it.
         fixture = 'ocr-notice-en.png' if sys.platform == 'win32' else 'ocr-notice.png'
         text = recognize(Path(__file__).parent / 'fixtures' / fixture)
         self.assertIn('A101', text.replace(' ', ''))
-        self.assertIn('09:00', text.replace(' ', ''))
+        # Windows Chinese OCR can render the time separator at full width.
+        self.assertRegex(text.replace(' ', ''), r'09[:：]00')
