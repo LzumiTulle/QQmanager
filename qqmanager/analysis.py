@@ -139,7 +139,11 @@ def analyze(text, sent_at=None, interests=''):
     timing = re.search(r'今天|今日|明天|后天|周[一二三四五六日天]|\d{1,2}[:：点时月日]|第?\d{1,2}周|(?:考试|补考)(?:日程|安排)|延期|改期|取消|推迟|调整', body)
     resource = re.search(r'资料|课件|教程|文档|附件|指南|模板|学习路线|解决方法|解决步骤|解决方案', body)
     concrete = re.search(r'https?://|分享|下载|附件|\.(?:pdf|docx|zip|md)|包含|使用|选择|执行|步骤|先.{1,20}再', body, re.I)
-    if prohibited_only(body):
+    from .course_notices import CODED_SCOPE, SCOPE_UPDATE
+    plain = re.sub(r'^@全体成员\s*','',body).strip()
+    if CODED_SCOPE.fullmatch(plain) or SCOPE_UPDATE.fullmatch(plain):
+        kind,score,reason='通知',75,'包含明确的实验范围或编号更正'
+    elif prohibited_only(body):
         kind,score,reason='通知',75,'原文说明取消或无需执行'
     elif action and directive and not personal_report:
         kind,score,reason='待办',85,'包含明确的处理动作与对象'

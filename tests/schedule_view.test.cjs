@@ -218,3 +218,14 @@ test('confirmed exam without a personal plan is upcoming until its exam date', (
   assert.match(next,/2026-12-02 13:40/);
   assert.match(next,/已添加提醒/);
 });
+
+test('course corrections show the newest notice and retain earlier originals under its matter', () => {
+  const notes = ['更正为 C4+C5','实验做 C4','记得带报告册'].map((content,i) => ({
+    id:3-i,content,kind:'实验内容',sender:'老师',group_name:'班群',sent_at:'10:00',
+  }));
+  const ctx = vm.createContext({notes, esc:String, fmt:String, document:{addEventListener(){}}});
+  vm.runInContext(fs.readFileSync(require.resolve('../web/planner.js'),'utf8'),ctx);
+  const html = vm.runInContext('courseNoticeDetails(notes,{7:{id:7,source_message_ids:[2,3]}})',ctx);
+  assert.match(html,/更正为 C4\+C5.*<details><summary>此前通知（1）<\/summary>.*实验做 C4.*<\/details>.*记得带报告册/s);
+  assert.equal((html.match(/data-action="message-detail"/g)||[]).length,3);
+});

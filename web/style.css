@@ -527,3 +527,18 @@ body[data-view="messages"] .library-row .row-title { font-weight: 400; }
 .desktop-preferences .inline-actions { padding-top:16px;border-top:1px solid var(--line); }
 .schedule-table thead th:first-child { width:104px; }
 .schedule-table { min-width:790px; }
+
+.matter-tools > summary { font-size:var(--type-label); cursor:pointer; }
+.matter-tools[open] > summary { margin-bottom:12px; }
+.split-items button { max-width:100%; white-space:normal; overflow-wrap:anywhere; text-align:start; }
+.sidebar { overflow-y:auto; }
+@media (min-width:1000px) {
+  body:is([data-view="tasks"],[data-view="insights"]):has(#modal.detail-drawer[open]) main {
+    margin-inline-end:min(40vw,520px);
+  }
+  body:is([data-view="tasks"],[data-view="insights"]) #modal.detail-drawer { width:min(40vw,520px); }
+  body:has(#modal.detail-drawer[open]) .info-row .row-title { white-space:normal; overflow-wrap:anywhere; }
+}
+@media (max-width:999px) {
+  body:is([data-view="tasks"],[data-view="insights"]) #modal.detail-drawer { width:100%; max-width:100%; }
+}

@@ -30,6 +30,19 @@ class ScheduleTests(unittest.TestCase):
         next_week=planner.snapshot(self.s,'2026-11-23')
         self.assertFalse(any(c['notices'] for d in next_week['days'] for c in d['courses']))
 
+    def test_lab_scope_correction_applies_to_the_current_lab_once(self):
+        for day, room in [(3,'讲堂'), (5,'一机房')]:
+            planner.save_course(self.s, dict(title='编译原理', weekday=day, location=room,
+                                            start_period=3, end_period=4, weeks=[1,2]))
+        text = '本次编译原理实验是C4+C5，不是只有C4'
+        for content in [text, '请问本次编译原理实验是C4吗？', '本次物理实验是C4+C5']:
+            self.s.add_messages([dict(content=content, group_name='班群', sender='老师',
+                                      sent_at='2026-11-20T10:14:06+08:00')], 'test')
+        data = planner.snapshot(self.s, '2026-11-20', 'month')
+        matches = [(d['date'], c['location'], n['kind'], n['content'])
+                   for d in data['days'] for c in d['courses'] for n in c['notices']]
+        self.assertEqual(matches, [('2026-11-20','一机房','实验内容',text)])
+
     def test_pending_matter_single_task_separate_deadline_and_course_conflict(self):
         self.s.add_messages([dict(content='请在下周四18:00前提交学业自查表',group_name=group,sender='老师',
                                   sent_at='2026-11-16T08:00:00+08:00') for group in ('班群','年级群')],'test')

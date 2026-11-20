@@ -25,6 +25,9 @@ def local_items(row):
     # Keep a mixed notice together and suggest only explicit all-student actions.
     actor=r'(?:全体同学|全体学生|全体人员|全员|班干部|班长|学习委员|宿舍长|团支书|团员|党员)'
     plain=re.sub(r'^@全体成员\s*|\s*@全体成员$','',text.strip())
+    from .course_notices import CODED_SCOPE, SCOPE_UPDATE
+    if CODED_SCOPE.fullmatch(plain) or SCOPE_UPDATE.fullmatch(plain):
+        return [item('通知',plain,plain)]
     duties=[part.strip() for part in re.split(r'[；;。！!\n，,]',plain) if part.strip()]
     duty=actor+r'(?:请|须|需|务必)?(?:参加|提交|填写|另交|缴纳|登记|领取|收集|上交)[\w《》]{1,24}'
     if duties and all(re.fullmatch(duty,d) and not re.search(r'已|未|但|除|仅|名单|符合|如果|之后|完成后|方可|条件|不用|无需|不必|请勿|及|或|和|并|否则|再由|另由|吗',d) for d in duties):

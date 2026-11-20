@@ -117,7 +117,7 @@ function scheduleEventHTML(e, showTime=true) {
   const time=[e.start,e.end].filter(Boolean).join('–');
   const description=[e.title,time,e.detail].filter(Boolean).join(' · ');
   const expiry=!e.done && ['task','exam'].includes(e.kind)?expiryTag(QQPlanner.expiryFor({value:e.date,end:e.end,kind:e.kind==='task'?'plan':'event'})):'';
-  const reminder=e.notices?.length?`<button class="course-notice" data-plan="course-notices" data-id="${e.courseId}" data-date="${e.date}" title="${esc(e.notices[0].content)}">课前提醒 · ${esc(e.notices[0].content)}</button>`:'';
+  const reminder=e.notices?.length?`<button class="course-notice" data-plan="course-notices" data-id="${e.courseId}" data-date="${e.date}" title="${esc(e.notices[0].content)}">${esc(e.notices[0].kind)}${e.notices.length>1?'（'+e.notices.length+' 条消息）':''} · ${esc(e.notices[0].content.replace(/^@全体成员\s*/,''))}</button>`:'';
   return `<button class="schedule-event se-${e.kind}" ${e.action} title="${esc(description)}">${showTime && time?`<small>${esc(time)}</small>`:''}<strong>${esc(e.title)}</strong>${e.detail||expiry?`<span>${esc(e.detail)}${expiry}</span>`:''}</button>${reminder}`;
 }
 

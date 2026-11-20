@@ -208,6 +208,9 @@ class Store:
                         ON CONFLICT(message_id,item_key) DO UPDATE SET kind=excluded.kind, title=excluded.title,
                         score=excluded.score, reason=excluded.reason, due=excluded.due, date_note=excluded.date_note, quality_reason='' ''',
                         (row['id'], item['kind'], item['title'], item['score'], item['reason'], item['due'], item['date_note']))
+            if full:
+                from .matters import sync
+                sync(self)
             if progress:
                 progress(reviewed,total)
             return {'reviewed':reviewed,'queued':tracked if review_run else queued}
@@ -242,6 +245,20 @@ class Store:
     def query(self, sql, args=()):
         with self.lock:
             return [dict(x) for x in self.db.execute(sql, args).fetchall()]
+
+    def previous_group_message(self, row):
+        """Immediate predecessor within 30 minutes, including otherwise unimportant chat."""
+        sent = row['sent_at']
+        rows = self.query("""SELECT m.id,m.sender FROM messages m
+            LEFT JOIN analysis_jobs j ON j.message_id=m.id
+            WHERE ((? IS NULL AND j.message_id IS NULL AND m.group_name=?)
+                OR (j.account=? AND j.group_id=?))
+            AND julianday(m.sent_at) BETWEEN julianday(?)-30.0/1440 AND julianday(?)
+            AND (julianday(m.sent_at)<julianday(?) OR m.id<?)
+            ORDER BY julianday(m.sent_at) DESC,m.id DESC LIMIT 1""",
+            (row['live_account'],row['group_name'],row['live_account'],row['live_group'],
+             sent,sent,sent,row.get('message_id',row['id'])))
+        return rows[0] if rows else None
 
     @staticmethod
     def _search_filters(fields, query, group):
